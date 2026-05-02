@@ -1,0 +1,67 @@
+{
+	"name": "wa-agent",
+	"version": "0.1.0",
+	"description": "WhatsApp Cloud API agent framework for Cloudflare Workers — D1-coalesced webhook queue, AI assistant integration, opt-in CRM, broadcast cron, and sequential drip plans.",
+	"type": "module",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./hono": {
+			"types": "./dist/hono.d.ts",
+			"default": "./dist/hono.js"
+		},
+		"./migrations/*": "./migrations/*"
+	},
+	"files": [
+		"dist",
+		"src",
+		"migrations",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"typecheck": "tsc -p tsconfig.json",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"test:unit": "vitest run -c vitest.config.unit.ts",
+		"test:mutate": "stryker run"
+	},
+	"keywords": [
+		"whatsapp",
+		"cloudflare-workers",
+		"d1",
+		"agent",
+		"llm",
+		"chatbot",
+		"meta",
+		"hono"
+	],
+	"engines": {
+		"node": ">=18"
+	},
+	"peerDependencies": {
+		"hono": "^4.0.0",
+		"openai": "^4.0.0"
+	},
+	"peerDependenciesMeta": {
+		"hono": { "optional": true },
+		"openai": { "optional": true }
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.5.16",
+		"@cloudflare/workers-types": "^4.20240909.0",
+		"@stryker-mutator/core": "^9.6.1",
+		"@stryker-mutator/vitest-runner": "^9.6.1",
+		"@vitest/coverage-istanbul": "^2.0.5",
+		"hono": "^4.4.4",
+		"openai": "~4.57.0",
+		"typescript": "^5.6.0",
+		"vitest": "^2.0.5"
+	},
+	"license": "MIT"
+}

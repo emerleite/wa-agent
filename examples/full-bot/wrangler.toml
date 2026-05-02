@@ -1,0 +1,24 @@
+name = "full-bot"
+main = "src/index.js"
+compatibility_date = "2026-04-22"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "full-bot"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
+[[r2_buckets]]
+binding = "TTS_BUCKET"
+bucket_name = "full-bot-tts"
+
+[vars]
+TTS_PUBLIC_HOST = "https://tts.example.com"
+
+[triggers]
+crons = [
+	"0 6  * * *",   # plan delivery
+	"0 9  * * *",   # devotional broadcast
+	"0 12 * * *",   # re-engagement question
+	"0 14 * * *",   # afternoon slot
+]
