@@ -86,6 +86,8 @@ export type { PreferenceStoreOptions, SetOptions as PreferenceSetOptions } from 
 
 // Utils
 export { whatsappBold, stripMarkdown, chunkText, INTERACTIVE_BODY_MAX, TEXT_BODY_MAX } from './util/text.js';
+export { QuietHours } from './util/quiet_hours.js';
+export type { QuietHoursOptions } from './util/quiet_hours.js';
 
 // Shared types
 export type {

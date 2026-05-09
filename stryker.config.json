@@ -25,7 +25,8 @@
 		"src/ai/summarizer.ts",
 		"src/ai/transcriber.ts",
 		"src/dashboard/index.ts",
-		"src/preference/preference_store.ts"
+		"src/preference/preference_store.ts",
+		"src/util/quiet_hours.ts"
 	],
 	"thresholds": {
 		"high": 80,

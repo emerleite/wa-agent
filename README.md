@@ -499,6 +499,31 @@ const text = await transcriber.transcribe(stream)
 
 Works against OpenAI directly, Azure OpenAI, or the Cloudflare AI Gateway base URL.
 
+### QuietHours
+
+Daily window during which the bot doesn't send messages. Wrap any send site (broadcast, cron, reactive ad delivery, even on-demand replies) for a polite no-3am-pings policy.
+
+```js
+import { QuietHours } from 'wa-agent'
+
+const qh = new QuietHours({ start: '22:00', end: '06:00', timezone: 'America/Sao_Paulo' })
+
+agent.cron('0 9 * * *', async ({ env }) => {
+  if (qh.isQuiet()) return  // skip the morning broadcast on holidays etc.
+  // … broadcast normally
+})
+
+// Or inside a Broadcast send callback:
+await broadcast.run({
+  send: async ({ whatsapp }) => {
+    if (qh.isQuiet()) return false  // logged as skipped
+    return await client.sendText(whatsapp, content)
+  },
+})
+```
+
+`start === end` means never quiet (helpful as a default-disabled config). The window can wrap midnight (`22:00 → 06:00`) and is timezone-aware via `Intl.DateTimeFormat` so DST is handled correctly. `start` is inclusive, `end` is exclusive — `06:00` means "messages allowed from 06:00 onward".
+
 ### Stores you can reach into
 
 The Agent owns four stores backed by D1 — they're exposed as fields and on the `HandlerContext` so handlers can use them directly:
@@ -665,6 +690,7 @@ The framework was extracted from a production bot ([bibliafala](https://bibliafa
 | `bible/bible_search.js` (BM25 + LIKE + RRF) + `bible_db.js` (FTS5 helpers) | `HybridSearch` + `buildSearchSchema` |
 | `verse_images/usage.js` (per-user feature usage log) | `UsageCounter` (+ daily caps + analytics queries) |
 | `lead.js` `getDeliveryMode` / `setDeliveryMode` (text/audio/both pref) | `PreferenceStore` + `definePreference` (generic key-value, any number of prefs without ALTER TABLE) |
+| `ads/schedule.js` quiet-hours guard 22:00–06:00 BRT applied across all ad surfaces, cron broadcasts, plan delivery, message dispatch | `QuietHours` (timezone-aware HH:MM window, wrap-midnight aware, IANA tz via Intl) |
 | `dashboard.js` (HTMX shell, Chart.js cards, basic-auth) | `Dashboard` + 8 default cards: `summaryCard` / `queueCard` / `dauCard` / `messagesChartCard` / `funnelCard` / `engagementCard` / `plansCard` / `churnCard` |
 | All D1 schemas (`messages`, `sessions`, `leads`, `message_windows`, `message_queue`, `engagement_*`, `reading_plan*`, `ads`, `image_usage_log`, `delivery_mode`) | `migrations/001_core.sql` … `008_preferences.sql` |
 | Lifecycle hooks for first contact / errors | `agent.on('onFirstContact' \| 'onMessage' \| 'onError', ...)` |
@@ -765,6 +791,7 @@ Run takes ~18s. Current scores (`reports/mutation/index.html` after a run):
 | `router/button_router` | 78.57% | 81.48% |
 | `preference/preference_store` | 75.00% | 90.00% |
 | `flow/upsell` | 75.34% | 78.57% |
+| `util/quiet_hours` | 74.70% | 74.70% |
 | `ai/openai_assistant` | 64.58% | 65.96% |
 | `flow/onboarding` | 58.82% | 66.67% |
 | `media/azure_tts` | 40.00% | 70.00% |
