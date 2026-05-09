@@ -690,6 +690,7 @@ The framework was extracted from a production bot ([bibliafala](https://bibliafa
 | `bible/bible_search.js` (BM25 + LIKE + RRF) + `bible_db.js` (FTS5 helpers) | `HybridSearch` + `buildSearchSchema` |
 | `verse_images/usage.js` (per-user feature usage log) | `UsageCounter` (+ daily caps + analytics queries) |
 | `lead.js` `getDeliveryMode` / `setDeliveryMode` (text/audio/both pref) | `PreferenceStore` + `definePreference` (generic key-value, any number of prefs without ALTER TABLE) |
+| `dashboard.js` AI gate conversion fragment (blocked / converted / rate / 7-day chart over `leads.ai_gate_hits`) | `gateConversionCard` over `feature_usage` × `leads.funnel_state` (configurable feature + target state) |
 | `ads/schedule.js` quiet-hours guard 22:00–06:00 BRT applied across all ad surfaces, cron broadcasts, plan delivery, message dispatch | `QuietHours` (timezone-aware HH:MM window, wrap-midnight aware, IANA tz via Intl) |
 | `dashboard.js` (HTMX shell, Chart.js cards, basic-auth) | `Dashboard` + 8 default cards: `summaryCard` / `queueCard` / `dauCard` / `messagesChartCard` / `funnelCard` / `engagementCard` / `plansCard` / `churnCard` |
 | All D1 schemas (`messages`, `sessions`, `leads`, `message_windows`, `message_queue`, `engagement_*`, `reading_plan*`, `ads`, `image_usage_log`, `delivery_mode`) | `migrations/001_core.sql` … `008_preferences.sql` |
@@ -755,11 +756,11 @@ The package is fully TypeScript with strict mode + `noUncheckedIndexedAccess`. C
 
 **Unit** (`test/unit/`, 18 files, 135 tests) — pure-logic tests with no D1. Run in the default Node pool. Used by Stryker for mutation testing because it's fast and predictable. Coverage: webhook extract/verify, routers, access gate, hybrid search RRF, text utils, weighted pick, queue combine, OnboardingFlow ordering, Upsell side effects + per-user CTA URLs, OpenAI assistant adapter (mock SDK client), Summarizer + Transcriber, AzureTTS SSML escaping, R2Cache idempotency, Dashboard render shell, HttpTierProvider with mocked fetch, and WhatsAppClient endpoints (mocked fetch).
 
-**Integration** (`test/integration/`, 11 files, 89 tests) — real D1 via `@cloudflare/vitest-pool-workers`. Migrations auto-applied per run via `applyD1Migrations(env.DB, env.TEST_MIGRATIONS)`. Covers: D1CoalesceQueue (enqueue, dedupe, per-user coalescing, race-safety under concurrent processAll, ordering, retry-then-fail, cleanup), LeadStore, MessageWindow, MessageLog, SessionStore, SequentialPlan, Broadcast (audience query + dedupe log), ReEngagement weekly progress SQL window, UsageCounter (daily caps + analytics), PreferenceStore (key-value + typed `definePreference` helper), and 8 dashboard cards rendered against seeded D1.
+**Integration** (`test/integration/`, 11 files, 92 tests) — real D1 via `@cloudflare/vitest-pool-workers`. Migrations auto-applied per run via `applyD1Migrations(env.DB, env.TEST_MIGRATIONS)`. Covers: D1CoalesceQueue (enqueue, dedupe, per-user coalescing, race-safety under concurrent processAll, ordering, retry-then-fail, cleanup), LeadStore, MessageWindow, MessageLog, SessionStore, SequentialPlan, Broadcast (audience query + dedupe log), ReEngagement weekly progress SQL window, UsageCounter (daily caps + analytics), PreferenceStore (key-value + typed `definePreference` helper), and 9 dashboard cards rendered against seeded D1 (including `gateConversionCard`).
 
 **E2E** (`test/e2e/`, 1 file, 6 tests) — drives a request all the way through Hono → `mountWebhook` → `agent.enqueue()` → `agent.drain()` → mocked Meta API. Uses `fetchMock` from `cloudflare:test` to assert the exact body sent to `graph.facebook.com/.../messages`.
 
-Total: **31 files, 255 tests, ~2.7s** under the Workers pool. The unit-only run is **19 files, 160 tests, ~0.7s** (used by Stryker).
+Total: **32 files, 270 tests, ~2.8s** under the Workers pool. The unit-only run is **20 files, 173 tests, ~0.7s** (used by Stryker).
 
 ### Coverage
 
@@ -767,10 +768,10 @@ Total: **31 files, 255 tests, ~2.7s** under the Workers pool. The unit-only run 
 
 | Metric | Threshold | Current |
 |---|---|---|
-| lines | 70 | 71.86 |
-| statements | 65 | 67.68 |
-| functions | 60 | 65.41 |
-| branches | 55 | 57.92 |
+| lines | 70 | 73.43 |
+| statements | 65 | 69.59 |
+| functions | 60 | 66.93 |
+| branches | 55 | 60.34 |
 
 Files at or near 100%: `util/text.ts`, `gate/access_gate.ts`, `gate/tier_provider.ts`, `media/r2_cache.ts`, `flow/onboarding.ts`, `flow/upsell.ts`, `ai/openai_assistant.ts`, `ai/summarizer.ts`. Files below the floor (covered by integration tests with edge paths uncovered): SQL methods in `slot_delivery`, `hybrid_search`, `lead_store`, `message_window`, and the `dashboard` render fragments. Bring those up by writing card-render integration tests against a seeded D1.
 
@@ -799,7 +800,7 @@ Run takes ~18s. Current scores (`reports/mutation/index.html` after a run):
 | `queue/d1_coalesce_queue` | 22.95% | 66.67% |
 | `dashboard` | 17.67% | 69.49% |
 | `search/hybrid_search` | 18.55% | 52.27% |
-| **Overall** | **46.84%** | **75.18%** |
+| **Overall** | **47.49%** | **75.30%** |
 
 The "covered-only" column is the meaningful one — it scores mutations only inside lines that have test coverage. The overall lags because integration-tested code (D1 SQL methods) isn't run by the unit suite, so Stryker counts it as "no coverage". Surviving mutants are visible in `reports/mutation/index.html`; each is a real test gap. The break threshold is 40% — `npm run test:mutate` fails CI below that. The high (80) and low (60) thresholds are aspirational.
 

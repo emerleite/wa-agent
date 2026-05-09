@@ -73,6 +73,7 @@ export {
 	engagementCard,
 	plansCard,
 	churnCard,
+	gateConversionCard,
 } from './dashboard/index.js';
 export type { Card, CardContext } from './dashboard/index.js';
 

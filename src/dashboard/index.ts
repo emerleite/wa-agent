@@ -281,6 +281,81 @@ export function engagementCard({
 }
 
 /**
+ * Free→paid conversion funnel for any gated feature.
+ *
+ * Pairs with `UsageCounter`: every time `gate.check()` returns
+ * `{ allowed: false }`, the consumer logs `usage.record(whatsapp, feature)`.
+ * This card aggregates those events:
+ *  - users blocked (distinct count)
+ *  - users converted (blocked + later moved to `convertedFunnelState`)
+ *  - conversion rate (converted / blocked)
+ *  - total hits
+ *  - daily blocked-users series for the last `days`
+ *
+ * Defaults to feature='ai_gate_blocked' and convertedFunnelState='SUBSCRIBE'
+ * but both are configurable.
+ */
+export function gateConversionCard({
+	id = 'gate_conversion',
+	title = 'AI gate conversion',
+	refreshSeconds = 60,
+	feature = 'ai_gate_blocked',
+	convertedFunnelState = 'SUBSCRIBE',
+	days = 7,
+} = {}): Card {
+	return {
+		id,
+		refreshSeconds,
+		async render({ db }) {
+			const results = await db.batch<Record<string, number | string>>([
+				db.prepare(`SELECT COUNT(DISTINCT whatsapp) as users_blocked, COUNT(*) as total_hits FROM feature_usage WHERE feature = ?`).bind(feature),
+				db
+					.prepare(
+						`SELECT COUNT(DISTINCT u.whatsapp) as converted
+						 FROM feature_usage u
+						 JOIN leads l ON l.whatsapp = u.whatsapp
+						 WHERE u.feature = ? AND l.funnel_state = ?`
+					)
+					.bind(feature, convertedFunnelState),
+				db
+					.prepare(
+						`SELECT date(used_at) as day, COUNT(DISTINCT whatsapp) as users
+						 FROM feature_usage WHERE feature = ? AND used_at >= date('now', '-${days} days')
+						 GROUP BY date(used_at) ORDER BY day`
+					)
+					.bind(feature),
+			]);
+			const summary = results[0]?.results?.[0] ?? {};
+			const conv = results[1]?.results?.[0] ?? {};
+			const series = results[2]?.results ?? [];
+
+			const blocked = (summary.users_blocked as number) ?? 0;
+			const hits = (summary.total_hits as number) ?? 0;
+			const converted = (conv.converted as number) ?? 0;
+			const rate = blocked > 0 ? Math.round((converted / blocked) * 100) : 0;
+
+			const labels = series.map((x) => String(x.day).slice(5));
+			const values = series.map((x) => Number(x.users) || 0);
+			const cid = `c_${id}_${Date.now()}`;
+
+			return `<h2>${escapeHtml(title)}</h2>
+				<div class="kpi">
+					<div class="kpi-item"><div class="kpi-value">${blocked}</div><div class="kpi-label">Blocked</div></div>
+					<div class="kpi-item"><div class="kpi-value">${converted}</div><div class="kpi-label">Converted</div></div>
+					<div class="kpi-item"><div class="kpi-value">${rate}%</div><div class="kpi-label">Rate</div></div>
+					<div class="kpi-item"><div class="kpi-value">${hits}</div><div class="kpi-label">Total hits</div></div>
+				</div>
+				<canvas id="${cid}" style="margin-top:12px"></canvas>
+				<script>new Chart(document.getElementById('${cid}'), {
+					type: 'line',
+					data: { labels: ${JSON.stringify(labels)}, datasets: [{ label: 'Blocked/day', data: ${JSON.stringify(values)}, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.3 }] },
+					options: { responsive: true, plugins: { legend: { labels: { color: '#94a3b8' } } }, scales: { x: { ticks: { color: '#64748b' } }, y: { ticks: { color: '#64748b' }, beginAtZero: true } } }
+				});</script>`;
+		},
+	};
+}
+
+/**
  * Sequential-plan enrollment table with completion rate per plan.
  * Reads `plans` + `user_plans`.
  */
@@ -338,7 +413,7 @@ export function churnCard({ id = 'churn', title = 'Churn (opt-in, no window)', r
 }
 
 export const defaultCards = {
-	all: (): Card[] => [summaryCard(), queueCard(), dauCard(), messagesChartCard(), funnelCard(), engagementCard(), plansCard(), churnCard()],
+	all: (): Card[] => [summaryCard(), queueCard(), dauCard(), messagesChartCard(), funnelCard(), engagementCard(), plansCard(), gateConversionCard(), churnCard()],
 	summary: (): Card[] => [summaryCard()],
 	core: (): Card[] => [summaryCard(), queueCard(), messagesChartCard(), funnelCard()],
 };

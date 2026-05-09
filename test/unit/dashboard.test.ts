@@ -49,8 +49,8 @@ describe('default card builders', () => {
 
 	it('defaultCards.all() returns the full set', () => {
 		const all = defaultCards.all();
-		expect(all.length).toBe(8);
-		expect(all.map((c) => c.id)).toEqual(['summary', 'queue', 'dau', 'messages', 'funnel', 'engagement', 'plans', 'churn']);
+		expect(all.length).toBe(9);
+		expect(all.map((c) => c.id)).toEqual(['summary', 'queue', 'dau', 'messages', 'funnel', 'engagement', 'plans', 'gate_conversion', 'churn']);
 	});
 
 	it('defaultCards.core() returns 4 essential cards', () => {

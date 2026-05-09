@@ -109,6 +109,43 @@ describe('plansCard', () => {
 	});
 });
 
+describe('gateConversionCard', () => {
+	it('shows blocked + converted + rate from feature_usage × leads', async () => {
+		const { gateConversionCard } = await import('../../src/dashboard/index.js');
+
+		// 3 distinct users hit the AI gate; 1 of them later converted to SUBSCRIBE
+		await db.prepare(`INSERT INTO leads (whatsapp, ad_data, funnel_state) VALUES ('1','{}','SUBSCRIBE'),('2','{}','CHECKOUT'),('3','{}','NEW')`).run();
+		await db.prepare(`INSERT INTO feature_usage (whatsapp, feature) VALUES ('1','ai_gate_blocked'),('1','ai_gate_blocked'),('2','ai_gate_blocked'),('3','ai_gate_blocked')`).run();
+
+		const html = await gateConversionCard().render({ db, env: {}, query: {} });
+		expect(html).toContain('Blocked');
+		expect(html).toContain('>3<');     // 3 distinct blocked
+		expect(html).toContain('Converted');
+		expect(html).toContain('>1<');     // 1 converted
+		expect(html).toContain('33%');     // 1/3 rate
+		expect(html).toContain('>4<');     // 4 total hits
+	});
+
+	it('honors custom feature + funnel state config', async () => {
+		const { gateConversionCard } = await import('../../src/dashboard/index.js');
+		await db.prepare(`INSERT INTO leads (whatsapp, ad_data, funnel_state) VALUES ('1','{}','PRO')`).run();
+		await db.prepare(`INSERT INTO feature_usage (whatsapp, feature) VALUES ('1','tts_blocked')`).run();
+
+		const html = await gateConversionCard({ feature: 'tts_blocked', convertedFunnelState: 'PRO' }).render({
+			db,
+			env: {},
+			query: {},
+		});
+		expect(html).toContain('100%'); // 1 blocked, 1 converted
+	});
+
+	it('shows 0% when no one has been blocked', async () => {
+		const { gateConversionCard } = await import('../../src/dashboard/index.js');
+		const html = await gateConversionCard().render({ db, env: {}, query: {} });
+		expect(html).toContain('0%');
+	});
+});
+
 describe('churnCard', () => {
 	it('counts opt-in users with no open window', async () => {
 		await db.prepare(`INSERT INTO leads (whatsapp, ad_data, opt_in) VALUES ('1', '{}', 1), ('2', '{}', 1), ('3', '{}', 1)`).run();
