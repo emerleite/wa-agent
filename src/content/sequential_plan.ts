@@ -35,6 +35,12 @@ export interface UserPlanRow {
 	started_at: string;
 	completed_at: string | null;
 	is_active: number;
+	/**
+	 * Timestamp of the last successful delivery to this user for this plan.
+	 * Set by `markDelivered`. Read by `usersForDelivery` to enforce the
+	 * minimum-interval cadence (default 20h) regardless of calendar date.
+	 */
+	last_delivered_at: string | null;
 	title?: string;
 	slug?: string;
 	duration_days?: number;
@@ -179,7 +185,15 @@ export class SequentialPlan {
 		return stale.length;
 	}
 
-	async usersForDelivery({ limit = 500 }: { limit?: number } = {}): Promise<DeliveryUser[]> {
+	/**
+	 * Cron audience: users due for the next day's delivery.
+	 *
+	 * Gates: active enrollment, opt-in lead, open Meta message window, and
+	 * `last_delivered_at` either NULL or older than `minIntervalHours` (default 20h).
+	 * The interval gate is per-enrollment — it survives midnight rollovers
+	 * and click-and-cron races that calendar-date filtering can't catch.
+	 */
+	async usersForDelivery({ limit = 500, minIntervalHours = 20 }: { limit?: number; minIntervalHours?: number } = {}): Promise<DeliveryUser[]> {
 		const r = await this.db
 			.prepare(
 				`SELECT up.whatsapp, up.plan_id, up.current_day, p.title, p.duration_days
@@ -188,11 +202,8 @@ export class SequentialPlan {
 				 JOIN message_windows mw ON mw.whatsapp = up.whatsapp AND mw.end_time > datetime('now')
 				 JOIN leads l ON l.whatsapp = up.whatsapp AND l.opt_in = 1
 				 WHERE up.is_active = 1
-				   AND NOT EXISTS (
-					   SELECT 1 FROM ${this.progressTable} pp
-					   WHERE pp.whatsapp = up.whatsapp AND pp.plan_id = up.plan_id
-					     AND date(pp.completed_at) = date('now')
-				   )
+				   AND (up.last_delivered_at IS NULL
+				        OR up.last_delivered_at < datetime('now', '-${minIntervalHours} hours'))
 				 LIMIT ?`
 			)
 			.bind(limit)
@@ -200,12 +211,23 @@ export class SequentialPlan {
 		return r.results ?? [];
 	}
 
+	/**
+	 * Record a successful delivery for cadence + analytics.
+	 *
+	 * Writes the progress row (idempotent on (whatsapp, plan_id, day)) AND
+	 * bumps `user_plans.last_delivered_at` to NOW so `usersForDelivery`
+	 * won't redeliver until at least `minIntervalHours` later.
+	 */
 	async markDelivered(whatsapp: string, planId: number, day: number): Promise<void> {
 		try {
-			await this.db
-				.prepare(`INSERT OR IGNORE INTO ${this.progressTable} (whatsapp, plan_id, day) VALUES (?, ?, ?)`)
-				.bind(whatsapp, planId, day)
-				.run();
+			await this.db.batch([
+				this.db
+					.prepare(`INSERT OR IGNORE INTO ${this.progressTable} (whatsapp, plan_id, day) VALUES (?, ?, ?)`)
+					.bind(whatsapp, planId, day),
+				this.db
+					.prepare(`UPDATE ${this.userPlanTable} SET last_delivered_at = datetime('now') WHERE whatsapp = ? AND plan_id = ?`)
+					.bind(whatsapp, planId),
+			]);
 		} catch (e) {
 			console.error('[SequentialPlan] markDelivered:', e instanceof Error ? e.message : e);
 		}

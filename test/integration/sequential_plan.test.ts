@@ -84,4 +84,83 @@ describe('SequentialPlan', () => {
 		const e = await plans.getActiveEnrollment('5551');
 		expect(e?.current_day).toBe(2);
 	});
+
+	describe('cadence gate (last_delivered_at)', () => {
+		// Need opt-in + open window for usersForDelivery to consider a user.
+		async function eligible(whatsapp: string) {
+			await db.prepare(`INSERT OR IGNORE INTO leads (whatsapp, ad_data, opt_in) VALUES (?, '{}', 1)`).bind(whatsapp).run();
+			await db.prepare(`UPDATE leads SET opt_in = 1 WHERE whatsapp = ?`).bind(whatsapp).run();
+			await db
+				.prepare(
+					`INSERT INTO message_windows (whatsapp, window_type, end_time) VALUES (?, 'paid', datetime('now', '+1 day'))
+					 ON CONFLICT(whatsapp) DO UPDATE SET end_time = datetime('now', '+1 day')`
+				)
+				.bind(whatsapp)
+				.run();
+		}
+
+		beforeEach(async () => {
+			await db.prepare('DELETE FROM leads').run();
+			await db.prepare('DELETE FROM message_windows').run();
+		});
+
+		it('markDelivered writes last_delivered_at on user_plans', async () => {
+			await plans.enroll('5551', 1);
+			await plans.markDelivered('5551', 1, 1);
+			const row = await db
+				.prepare(`SELECT last_delivered_at FROM user_plans WHERE whatsapp = '5551'`)
+				.first<{ last_delivered_at: string }>();
+			expect(row?.last_delivered_at).toBeTruthy();
+		});
+
+		it('usersForDelivery excludes users delivered to within the last 20h', async () => {
+			await eligible('5551');
+			await plans.enroll('5551', 1);
+			await plans.markDelivered('5551', 1, 1);
+			const due = await plans.usersForDelivery();
+			expect(due).toEqual([]);
+		});
+
+		it('usersForDelivery includes users whose last delivery was >20h ago', async () => {
+			await eligible('5551');
+			await plans.enroll('5551', 1);
+			await plans.markDelivered('5551', 1, 1);
+			await db
+				.prepare(`UPDATE user_plans SET last_delivered_at = datetime('now', '-21 hours') WHERE whatsapp = '5551'`)
+				.run();
+			const due = await plans.usersForDelivery();
+			expect(due.length).toBe(1);
+			expect(due[0]?.whatsapp).toBe('5551');
+		});
+
+		it('usersForDelivery includes never-delivered enrollments (NULL last_delivered_at)', async () => {
+			await eligible('5552');
+			await plans.enroll('5552', 1);
+			const due = await plans.usersForDelivery();
+			expect(due.length).toBe(1);
+		});
+
+		it('cross-midnight click+cron does not redeliver within the 20h window', async () => {
+			// Simulate: delivered at 23:55, user clicks Done, cron fires at 00:30
+			await eligible('5553');
+			await plans.enroll('5553', 1);
+			await plans.markDelivered('5553', 1, 1);
+			// User taps Done — advances current_day to 2
+			await plans.markDone('5553', 1, 1);
+			// Cron at +35 minutes: must NOT redeliver
+			const due = await plans.usersForDelivery();
+			expect(due).toEqual([]);
+		});
+
+		it('minIntervalHours override', async () => {
+			await eligible('5554');
+			await plans.enroll('5554', 1);
+			await plans.markDelivered('5554', 1, 1);
+			await db
+				.prepare(`UPDATE user_plans SET last_delivered_at = datetime('now', '-2 hours') WHERE whatsapp = '5554'`)
+				.run();
+			expect((await plans.usersForDelivery({ minIntervalHours: 20 })).length).toBe(0);
+			expect((await plans.usersForDelivery({ minIntervalHours: 1 })).length).toBe(1);
+		});
+	});
 });
