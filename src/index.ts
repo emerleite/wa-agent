@@ -85,6 +85,10 @@ export type { UsageRow, UsageCounterOptions } from './usage/usage_counter.js';
 export { PreferenceStore, definePreference } from './preference/preference_store.js';
 export type { PreferenceStoreOptions, SetOptions as PreferenceSetOptions } from './preference/preference_store.js';
 
+// Per-channel opt-out
+export { ChannelOptOuts } from './channel/channel_opt_outs.js';
+export type { ChannelOptOutsOptions, OptOutRow } from './channel/channel_opt_outs.js';
+
 // Utils
 export { whatsappBold, stripMarkdown, chunkText, INTERACTIVE_BODY_MAX, TEXT_BODY_MAX } from './util/text.js';
 export { QuietHours } from './util/quiet_hours.js';
