@@ -1,46 +1,46 @@
 /**
- * Per-user persistent state (e.g., AI thread_id) keyed by WhatsApp number.
+ * Per-user AI thread state, keyed by WhatsApp number.
+ *
+ * From v0.2 onward: backed by Drizzle ORM.
  */
-export interface SessionStoreOptions {
-	db: D1Database;
-	table?: string;
-}
+import { eq, desc } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { sessions, type Session } from '../db/schema/sessions.js';
 
-export interface SessionRow {
-	id: number;
-	thread_id: string | null;
-	whatsapp: string;
-	created_at: string;
-	updated_at: string;
-	[k: string]: unknown;
+export interface SessionStoreOptions {
+	db: DB;
 }
 
 export class SessionStore {
-	readonly db: D1Database;
-	readonly table: string;
+	readonly db: DB;
 
-	constructor({ db, table = 'sessions' }: SessionStoreOptions) {
+	constructor({ db }: SessionStoreOptions) {
 		if (!db) throw new Error('SessionStore: db required');
 		this.db = db;
-		this.table = table;
 	}
 
-	async get(whatsapp: string): Promise<SessionRow | null> {
-		return await this.db
-			.prepare(`SELECT * FROM ${this.table} WHERE whatsapp = ? ORDER BY created_at DESC LIMIT 1`)
-			.bind(whatsapp)
-			.first<SessionRow>();
+	async get(whatsapp: string): Promise<Session | null> {
+		const r = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.whatsapp, whatsapp))
+			.orderBy(desc(sessions.createdAt))
+			.limit(1);
+		return r[0] ?? null;
 	}
 
 	async set(whatsapp: string, { threadId }: { threadId: string }): Promise<boolean> {
-		const r = await this.db
-			.prepare(`INSERT OR REPLACE INTO ${this.table} (thread_id, whatsapp) VALUES (?, ?)`)
-			.bind(threadId, whatsapp)
-			.run();
-		return r.success;
+		await this.db
+			.insert(sessions)
+			.values({ whatsapp, threadId })
+			.onConflictDoUpdate({
+				target: sessions.whatsapp,
+				set: { threadId, updatedAt: new Date().toISOString() },
+			});
+		return true;
 	}
 
 	async clear(whatsapp: string): Promise<void> {
-		await this.db.prepare(`DELETE FROM ${this.table} WHERE whatsapp = ?`).bind(whatsapp).run();
+		await this.db.delete(sessions).where(eq(sessions.whatsapp, whatsapp));
 	}
 }

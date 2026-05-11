@@ -218,7 +218,7 @@ describe('Upsell.sendSmart', () => {
 	function build(funnelState: string | null = null) {
 		const client = new MockWhatsAppClient();
 		const leads = {
-			get: vi.fn(async () => (funnelState ? { funnel_state: funnelState } : null)),
+			get: vi.fn(async () => (funnelState ? { funnelState } : null)),
 			setFunnelState: vi.fn(),
 		} as unknown as LeadStore;
 		const upsell = new Upsell({
@@ -257,7 +257,7 @@ describe('Upsell.sendSmart', () => {
 
 	it('falls back to full pitch if no reminder configured', async () => {
 		const client = new MockWhatsAppClient();
-		const leads = { get: vi.fn(async () => ({ funnel_state: 'CHECKOUT' })), setFunnelState: vi.fn() } as unknown as LeadStore;
+		const leads = { get: vi.fn(async () => ({ funnelState: 'CHECKOUT' })), setFunnelState: vi.fn() } as unknown as LeadStore;
 		const upsell = new Upsell({
 			client: client as unknown as WhatsAppClient,
 			leads,

@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
 import { SessionStore } from '../../src/session/session_store.js';
+import { createDb } from '../../src/db/client.js';
 
-const db = (env as { DB: D1Database }).DB;
+const d1 = (env as { DB: D1Database }).DB;
+const db = createDb(d1);
 
 beforeEach(async () => {
-	await db.prepare('DELETE FROM sessions').run();
+	await d1.prepare('DELETE FROM sessions').run();
 });
 
 describe('SessionStore', () => {
@@ -18,7 +20,7 @@ describe('SessionStore', () => {
 	it('set + get round-trips threadId', async () => {
 		await store.set('5551', { threadId: 'thread_abc' });
 		const r = await store.get('5551');
-		expect(r?.thread_id).toBe('thread_abc');
+		expect(r?.threadId).toBe('thread_abc');
 		expect(r?.whatsapp).toBe('5551');
 	});
 
@@ -26,7 +28,7 @@ describe('SessionStore', () => {
 		await store.set('5551', { threadId: 'thread_old' });
 		await store.set('5551', { threadId: 'thread_new' });
 		const r = await store.get('5551');
-		expect(r?.thread_id).toBe('thread_new');
+		expect(r?.threadId).toBe('thread_new');
 	});
 
 	it('clear removes the row', async () => {
@@ -38,7 +40,7 @@ describe('SessionStore', () => {
 	it('isolates threadIds across users', async () => {
 		await store.set('5551', { threadId: 'A' });
 		await store.set('5552', { threadId: 'B' });
-		expect((await store.get('5551'))?.thread_id).toBe('A');
-		expect((await store.get('5552'))?.thread_id).toBe('B');
+		expect((await store.get('5551'))?.threadId).toBe('A');
+		expect((await store.get('5552'))?.threadId).toBe('B');
 	});
 });

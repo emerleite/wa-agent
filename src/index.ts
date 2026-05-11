@@ -10,6 +10,11 @@ export { Agent } from './agent.js';
 export type { AgentOptions } from './agent.js';
 export { mountWebhook } from './hono.js';
 
+// Drizzle DB layer (v0.2+)
+export { createDb, isDrizzleClient } from './db/client.js';
+export type { DB, Schema } from './db/client.js';
+export * as schema from './db/schema/index.js';
+
 // Client + webhook
 export { WhatsAppClient } from './client/whatsapp.js';
 export type { WhatsAppClientOptions, ContactCard, TemplatePayload } from './client/whatsapp.js';

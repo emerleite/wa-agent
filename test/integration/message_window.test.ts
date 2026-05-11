@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
 import { MessageWindow } from '../../src/window/message_window.js';
+import { createDb } from '../../src/db/client.js';
 
-const db = (env as { DB: D1Database }).DB;
+const d1 = (env as { DB: D1Database }).DB;
+const db = createDb(d1);
 
 beforeEach(async () => {
-	await db.prepare('DELETE FROM message_windows').run();
+	await d1.prepare('DELETE FROM message_windows').run();
 });
 
 describe('MessageWindow', () => {
@@ -33,7 +35,7 @@ describe('MessageWindow', () => {
 	it('start() renews an existing window', async () => {
 		await window.start('5551');
 		// Backdate to expire
-		await db.prepare("UPDATE message_windows SET end_time = datetime('now', '-1 hour') WHERE whatsapp = '5551'").run();
+		await d1.prepare("UPDATE message_windows SET end_time = datetime('now', '-1 hour') WHERE whatsapp = '5551'").run();
 		const before = await window.status('5551');
 		expect(before.inWindow).toBe(false);
 
@@ -47,7 +49,7 @@ describe('MessageWindow', () => {
 		await window.start('5552');
 		await window.start('5553');
 		// Close one
-		await db.prepare("UPDATE message_windows SET end_time = datetime('now', '-1 hour') WHERE whatsapp = '5552'").run();
+		await d1.prepare("UPDATE message_windows SET end_time = datetime('now', '-1 hour') WHERE whatsapp = '5552'").run();
 
 		const open = await window.listOpen();
 		expect(open.length).toBe(2);

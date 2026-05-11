@@ -1,12 +1,17 @@
 /**
  * Tracks Meta's customer service window so the agent knows when it can send
  * a free-form (non-template) message.
+ *
+ * From v0.2 onward: backed by Drizzle ORM.
  */
-import type { WindowType } from '../types.js';
+import { eq, gt, sql } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { messageWindows } from '../db/schema/message_windows.js';
+
+export type WindowType = 'free' | 'paid';
 
 export interface MessageWindowOptions {
-	db: D1Database;
-	table?: string;
+	db: DB;
 	freeWindowExpr?: string;
 	paidWindowExpr?: string;
 }
@@ -23,20 +28,17 @@ export interface OpenWindowRow {
 }
 
 export class MessageWindow {
-	readonly db: D1Database;
-	readonly table: string;
+	readonly db: DB;
 	readonly freeWindowExpr: string;
 	readonly paidWindowExpr: string;
 
 	constructor({
 		db,
-		table = 'message_windows',
 		freeWindowExpr = "datetime('now', '+71 hours', '+30 minutes')",
 		paidWindowExpr = "datetime('now', '+23 hours', '+30 minutes')",
 	}: MessageWindowOptions) {
 		if (!db) throw new Error('MessageWindow: db required');
 		this.db = db;
-		this.table = table;
 		this.freeWindowExpr = freeWindowExpr;
 		this.paidWindowExpr = paidWindowExpr;
 	}
@@ -44,35 +46,42 @@ export class MessageWindow {
 	async start(whatsapp: string, type: WindowType = 'paid'): Promise<void> {
 		const expr = type === 'free' ? this.freeWindowExpr : this.paidWindowExpr;
 		await this.db
-			.prepare(
-				`INSERT INTO ${this.table} (whatsapp, window_type, end_time)
-				 VALUES (?, ?, ${expr})
-				 ON CONFLICT (whatsapp) DO UPDATE SET
-				   window_type = excluded.window_type,
-				   start_time = datetime('now'),
-				   end_time = ${expr}`
-			)
-			.bind(whatsapp, type)
-			.run();
+			.insert(messageWindows)
+			.values({ whatsapp, windowType: type, endTime: sql.raw(`(${expr})`) })
+			.onConflictDoUpdate({
+				target: messageWindows.whatsapp,
+				set: {
+					windowType: type,
+					startTime: sql`(datetime('now'))`,
+					endTime: sql.raw(`(${expr})`),
+				},
+			});
 	}
 
 	async status(whatsapp: string): Promise<WindowStatus> {
-		const row = await this.db
-			.prepare(
-				`SELECT window_type, datetime('now') < end_time AS within
-				 FROM ${this.table} WHERE whatsapp = ?`
-			)
-			.bind(whatsapp)
-			.first<{ window_type: WindowType; within: number }>();
+		const r = await this.db
+			.select({
+				windowType: messageWindows.windowType,
+				within: sql<number>`(datetime('now') < ${messageWindows.endTime})`.as('within'),
+			})
+			.from(messageWindows)
+			.where(eq(messageWindows.whatsapp, whatsapp))
+			.limit(1);
+		const row = r[0];
 		if (!row) return { inWindow: false, type: null };
-		return { inWindow: !!row.within, type: row.window_type };
+		return { inWindow: !!row.within, type: row.windowType };
 	}
 
 	async listOpen({ limit = 5000 }: { limit?: number } = {}): Promise<OpenWindowRow[]> {
 		const r = await this.db
-			.prepare(`SELECT whatsapp, window_type, end_time FROM ${this.table} WHERE datetime('now') < end_time LIMIT ?`)
-			.bind(limit)
-			.all<OpenWindowRow>();
-		return r.results ?? [];
+			.select({
+				whatsapp: messageWindows.whatsapp,
+				window_type: messageWindows.windowType,
+				end_time: messageWindows.endTime,
+			})
+			.from(messageWindows)
+			.where(gt(messageWindows.endTime, sql`(datetime('now'))`))
+			.limit(limit);
+		return r as OpenWindowRow[];
 	}
 }

@@ -1,34 +1,22 @@
 /**
  * Inbound + outbound message audit log.
+ *
+ * From v0.2 onward: backed by Drizzle ORM.
  */
-export interface MessageLogOptions {
-	db: D1Database;
-	table?: string;
-}
+import { eq, sql } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { messages, type Message } from '../db/schema/messages.js';
 
-export interface MessageRow {
-	id: number;
-	wamid: string;
-	whatsapp: string;
-	thread_id: string | null;
-	type: string;
-	payload: string;
-	body: string | null;
-	response: string | null;
-	summary: string | null;
-	feedback: string | null;
-	created_at: string;
-	updated_at: string;
+export interface MessageLogOptions {
+	db: DB;
 }
 
 export class MessageLog {
-	readonly db: D1Database;
-	readonly table: string;
+	readonly db: DB;
 
-	constructor({ db, table = 'messages' }: MessageLogOptions) {
+	constructor({ db }: MessageLogOptions) {
 		if (!db) throw new Error('MessageLog: db required');
 		this.db = db;
-		this.table = table;
 	}
 
 	async logInbound({
@@ -43,11 +31,13 @@ export class MessageLog {
 		payload: unknown;
 	}): Promise<boolean> {
 		try {
-			const r = await this.db
-				.prepare(`INSERT INTO ${this.table} (wamid, whatsapp, type, payload) VALUES (?, ?, ?, ?)`)
-				.bind(wamid, whatsapp, type, typeof payload === 'string' ? payload : JSON.stringify(payload))
-				.run();
-			return r.success && r.meta.changes === 1;
+			await this.db.insert(messages).values({
+				wamid,
+				whatsapp,
+				type,
+				payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
+			});
+			return true;
 		} catch (e) {
 			console.error('[MessageLog] logInbound:', e instanceof Error ? e.message : e);
 			return false;
@@ -59,18 +49,23 @@ export class MessageLog {
 		{ body, response, summary }: { body: string; response: string | null; summary: string | null }
 	): Promise<boolean> {
 		const r = await this.db
-			.prepare(`UPDATE ${this.table} SET body = ?, response = ?, summary = ? WHERE wamid = ?`)
-			.bind(body, response, summary, wamid)
-			.run();
-		return r.success && r.meta.changes === 1;
+			.update(messages)
+			.set({ body, response, summary })
+			.where(eq(messages.wamid, wamid))
+			.returning({ id: messages.id });
+		return r.length === 1;
 	}
 
-	async byWamid(wamid: string): Promise<MessageRow | null> {
-		return await this.db.prepare(`SELECT * FROM ${this.table} WHERE wamid = ? LIMIT 1`).bind(wamid).first<MessageRow>();
+	async byWamid(wamid: string): Promise<Message | null> {
+		const r = await this.db.select().from(messages).where(eq(messages.wamid, wamid)).limit(1);
+		return r[0] ?? null;
 	}
 
 	async totalForUser(whatsapp: string): Promise<number> {
-		const row = await this.db.prepare(`SELECT COUNT(*) as total FROM ${this.table} WHERE whatsapp = ?`).bind(whatsapp).first<{ total: number }>();
-		return row?.total ?? 0;
+		const r = await this.db
+			.select({ total: sql<number>`count(*)`.as('total') })
+			.from(messages)
+			.where(eq(messages.whatsapp, whatsapp));
+		return r[0]?.total ?? 0;
 	}
 }

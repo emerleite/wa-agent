@@ -160,7 +160,7 @@ export interface HandlerContext {
 	session: Record<string, unknown> | null;
 	text: string;
 	reply: ReplyHelper;
-	db: D1Database;
+	db: import('./db/client.js').DB;
 	client: import('./client/whatsapp.js').WhatsAppClient;
 	ai: AIClient | null;
 	summarizer: SummarizerLike | null;

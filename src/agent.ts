@@ -11,6 +11,7 @@ import { SessionStore } from './session/session_store.js';
 import { MessageLog } from './session/message_log.js';
 import { LeadStore } from './lead/lead_store.js';
 import { MessageWindow } from './window/message_window.js';
+import { createDb, type DB } from './db/client.js';
 import type { TierProvider } from './gate/tier_provider.js';
 import type { AccessGate } from './gate/access_gate.js';
 import type { OnboardingFlow } from './flow/onboarding.js';
@@ -44,7 +45,14 @@ type Lifecycle = 'onFirstContact' | 'onMessage' | 'onError';
 
 export class Agent {
 	readonly client: WhatsAppClient;
-	readonly db: D1Database;
+	/** Drizzle ORM client (v0.2+). Use `agent.db.select()/.insert()/...` in handlers. */
+	readonly db: DB;
+	/**
+	 * Raw D1 binding. Temporary while we migrate the remaining stores to Drizzle
+	 * (sessions B + C). Public so consumers writing custom stores can still
+	 * reach into raw D1 if needed. Will be removed once everything is on Drizzle.
+	 */
+	readonly d1: D1Database;
 	readonly queue: D1CoalesceQueue;
 	readonly session: SessionStore;
 	readonly log: MessageLog;
@@ -92,7 +100,8 @@ export class Agent {
 		this.client = new WhatsAppClient({ endpoint: whatsapp.endpoint, token: whatsapp.token });
 		this.verifyToken = whatsapp.verifyToken ?? null;
 		this.appSecret = whatsapp.appSecret ?? null;
-		this.db = db;
+		this.d1 = db;
+		this.db = createDb(db);
 		this.ai = ai;
 		this.summarizer = summarizer;
 		this.summarizeOver = summarizeOver;
@@ -100,11 +109,13 @@ export class Agent {
 		this.gate = gate;
 		this.onboarding = onboarding;
 
+		// Unconverted stores (sessions B + C) still take raw D1.
 		this.queue = new D1CoalesceQueue({ db, ...queue });
-		this.session = stores.session ?? new SessionStore({ db });
-		this.log = stores.log ?? new MessageLog({ db });
-		this.leads = stores.leads ?? new LeadStore({ db });
-		this.window = stores.window ?? new MessageWindow({ db });
+		// Converted stores (session A) take the Drizzle client.
+		this.session = stores.session ?? new SessionStore({ db: this.db });
+		this.log = stores.log ?? new MessageLog({ db: this.db });
+		this.leads = stores.leads ?? new LeadStore({ db: this.db });
+		this.window = stores.window ?? new MessageWindow({ db: this.db });
 		this.contextHook = contextHook;
 
 		this.buttons.exact('opt-in', async (ctx) => {

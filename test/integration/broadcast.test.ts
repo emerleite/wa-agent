@@ -5,13 +5,15 @@ import { LeadStore } from '../../src/lead/lead_store.js';
 import { MessageWindow } from '../../src/window/message_window.js';
 import { MockWhatsAppClient } from '../helpers/mock_client.js';
 import type { WhatsAppClient } from '../../src/client/whatsapp.js';
+import { createDb } from '../../src/db/client.js';
 
-const db = (env as { DB: D1Database }).DB;
+const d1 = (env as { DB: D1Database }).DB;
+const db = createDb(d1);
 
 async function reset() {
-	await db.prepare('DELETE FROM leads').run();
-	await db.prepare('DELETE FROM message_windows').run();
-	await db.prepare('DELETE FROM broadcast_log').run();
+	await d1.prepare('DELETE FROM leads').run();
+	await d1.prepare('DELETE FROM message_windows').run();
+	await d1.prepare('DELETE FROM broadcast_log').run();
 }
 
 async function makeAudience(opts: { whatsapp: string; optIn?: boolean; window?: 'open' | 'closed' | 'none' }) {
@@ -23,7 +25,7 @@ async function makeAudience(opts: { whatsapp: string; optIn?: boolean; window?: 
 		await window.start(opts.whatsapp);
 	} else if (opts.window === 'closed') {
 		await window.start(opts.whatsapp);
-		await db.prepare("UPDATE message_windows SET end_time = datetime('now', '-1 hour') WHERE whatsapp = ?").bind(opts.whatsapp).run();
+		await d1.prepare("UPDATE message_windows SET end_time = datetime('now', '-1 hour') WHERE whatsapp = ?").bind(opts.whatsapp).run();
 	}
 }
 
@@ -35,7 +37,7 @@ describe('Broadcast', () => {
 		await makeAudience({ whatsapp: '5551' });
 		await makeAudience({ whatsapp: '5552' });
 
-		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db, channel: 'devotional', sendIntervalMs: 0 });
+		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db: d1, channel: 'devotional', sendIntervalMs: 0 });
 		const result = await b.run({ send: ({ whatsapp }) => client.sendText(whatsapp, 'hello') });
 
 		expect(result.candidates).toBe(2);
@@ -48,7 +50,7 @@ describe('Broadcast', () => {
 		await makeAudience({ whatsapp: '5551' });
 		await makeAudience({ whatsapp: '5552', optIn: false });
 
-		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db, channel: 'x', sendIntervalMs: 0 });
+		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db: d1, channel: 'x', sendIntervalMs: 0 });
 		const result = await b.run({ send: ({ whatsapp }) => client.sendText(whatsapp, 'x') });
 
 		expect(result.candidates).toBe(1);
@@ -60,7 +62,7 @@ describe('Broadcast', () => {
 		await makeAudience({ whatsapp: '5551' });
 		await makeAudience({ whatsapp: '5552', window: 'closed' });
 
-		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db, channel: 'x', sendIntervalMs: 0 });
+		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db: d1, channel: 'x', sendIntervalMs: 0 });
 		const result = await b.run({ send: ({ whatsapp }) => client.sendText(whatsapp, 'x') });
 
 		expect(result.candidates).toBe(1);
@@ -70,7 +72,7 @@ describe('Broadcast', () => {
 		const client = new MockWhatsAppClient();
 		await makeAudience({ whatsapp: '5551' });
 
-		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db, channel: 'devotional', sendIntervalMs: 0 });
+		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db: d1, channel: 'devotional', sendIntervalMs: 0 });
 		const first = await b.run({ send: ({ whatsapp }) => client.sendText(whatsapp, 'hi') });
 		const second = await b.run({ send: ({ whatsapp }) => client.sendText(whatsapp, 'hi again') });
 
@@ -83,8 +85,8 @@ describe('Broadcast', () => {
 		const client = new MockWhatsAppClient();
 		await makeAudience({ whatsapp: '5551' });
 
-		const a = new Broadcast({ client: client as unknown as WhatsAppClient, db, channel: 'A', sendIntervalMs: 0 });
-		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db, channel: 'B', sendIntervalMs: 0 });
+		const a = new Broadcast({ client: client as unknown as WhatsAppClient, db: d1, channel: 'A', sendIntervalMs: 0 });
+		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db: d1, channel: 'B', sendIntervalMs: 0 });
 
 		await a.run({ send: ({ whatsapp }) => client.sendText(whatsapp, 'a') });
 		const second = await b.run({ send: ({ whatsapp }) => client.sendText(whatsapp, 'b') });
@@ -95,7 +97,7 @@ describe('Broadcast', () => {
 		const client = new MockWhatsAppClient();
 		await makeAudience({ whatsapp: '5551' });
 
-		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db, channel: 'x', sendIntervalMs: 0 });
+		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db: d1, channel: 'x', sendIntervalMs: 0 });
 		const result = await b.run({ send: async () => false });
 		expect(result.delivered).toBe(0);
 		expect(result.skipped).toBe(1);
@@ -107,7 +109,7 @@ describe('Broadcast', () => {
 		const client = new MockWhatsAppClient();
 		await makeAudience({ whatsapp: '5551' });
 
-		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db, channel: 'x', sendIntervalMs: 0 });
+		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db: d1, channel: 'x', sendIntervalMs: 0 });
 		const result = await b.run({
 			send: async () => {
 				throw new Error('boom');
@@ -122,7 +124,7 @@ describe('Broadcast', () => {
 		await makeAudience({ whatsapp: '5551' });
 		await makeAudience({ whatsapp: '5552' });
 		// custom query: only the lower number
-		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db, channel: 'x', sendIntervalMs: 0 });
+		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db: d1, channel: 'x', sendIntervalMs: 0 });
 		const result = await b.run({
 			send: ({ whatsapp }) => client.sendText(whatsapp, 'x'),
 			audienceQuery: 'SELECT whatsapp FROM leads WHERE whatsapp = ?',
@@ -135,7 +137,7 @@ describe('Broadcast', () => {
 	it('wasDeliveredToday reports correctly for both states', async () => {
 		const client = new MockWhatsAppClient();
 		await makeAudience({ whatsapp: '5551' });
-		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db, channel: 'x', sendIntervalMs: 0 });
+		const b = new Broadcast({ client: client as unknown as WhatsAppClient, db: d1, channel: 'x', sendIntervalMs: 0 });
 		expect(await b.wasDeliveredToday('5551')).toBe(false);
 		await b.run({ send: ({ whatsapp }) => client.sendText(whatsapp, 'x') });
 		expect(await b.wasDeliveredToday('5551')).toBe(true);

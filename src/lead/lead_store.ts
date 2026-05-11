@@ -1,24 +1,17 @@
 /**
  * User profile + opt-in tracking.
+ *
+ * From v0.2 onward: backed by Drizzle ORM.
  */
+import { eq, sql } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { leads, type Lead } from '../db/schema/leads.js';
+
 const DEFAULT_FUNNEL = ['NEW', 'ONBOARDING', 'QUIZ', 'CHECKOUT', 'SUBSCRIBE'];
 
 export interface LeadStoreOptions {
-	db: D1Database;
-	table?: string;
+	db: DB;
 	funnelStates?: string[];
-}
-
-export interface LeadRow {
-	id: number;
-	ctwa_clid: string | null;
-	whatsapp: string;
-	ad_data: string;
-	created_at: string;
-	funnel_state: string;
-	opt_in: number;
-	opt_in_date: string | null;
-	opt_out_date: string | null;
 }
 
 export interface UpsertArgs {
@@ -29,19 +22,18 @@ export interface UpsertArgs {
 }
 
 export class LeadStore {
-	readonly db: D1Database;
-	readonly table: string;
+	readonly db: DB;
 	readonly funnelStates: string[];
 
-	constructor({ db, table = 'leads', funnelStates = DEFAULT_FUNNEL }: LeadStoreOptions) {
+	constructor({ db, funnelStates = DEFAULT_FUNNEL }: LeadStoreOptions) {
 		if (!db) throw new Error('LeadStore: db required');
 		this.db = db;
-		this.table = table;
 		this.funnelStates = funnelStates;
 	}
 
-	async get(whatsapp: string): Promise<LeadRow | null> {
-		return await this.db.prepare(`SELECT * FROM ${this.table} WHERE whatsapp = ?`).bind(whatsapp).first<LeadRow>();
+	async get(whatsapp: string): Promise<Lead | null> {
+		const r = await this.db.select().from(leads).where(eq(leads.whatsapp, whatsapp)).limit(1);
+		return r[0] ?? null;
 	}
 
 	async exists(whatsapp: string): Promise<boolean> {
@@ -50,15 +42,16 @@ export class LeadStore {
 
 	async upsert({ whatsapp, ctwaClid = null, adData = null, funnelState = 'NEW' }: UpsertArgs): Promise<boolean> {
 		try {
-			const r = await this.db
-				.prepare(
-					`INSERT INTO ${this.table} (ctwa_clid, whatsapp, ad_data, funnel_state)
-					 VALUES (?, ?, ?, ?)
-					 ON CONFLICT(whatsapp) DO NOTHING`
-				)
-				.bind(ctwaClid || `${Date.now()}::${whatsapp}`, whatsapp, JSON.stringify(adData ?? { whatsapp }), funnelState)
-				.run();
-			return r.success;
+			await this.db
+				.insert(leads)
+				.values({
+					whatsapp,
+					ctwaClid: ctwaClid || `${Date.now()}::${whatsapp}`,
+					adData: JSON.stringify(adData ?? { whatsapp }),
+					funnelState,
+				})
+				.onConflictDoNothing({ target: leads.whatsapp });
+			return true;
 		} catch (e) {
 			console.error('[LeadStore] upsert:', e instanceof Error ? e.message : e);
 			return false;
@@ -67,27 +60,27 @@ export class LeadStore {
 
 	async optIn(whatsapp: string): Promise<void> {
 		await this.db
-			.prepare(`UPDATE ${this.table} SET opt_in = 1, opt_in_date = datetime('now'), opt_out_date = NULL WHERE whatsapp = ?`)
-			.bind(whatsapp)
-			.run();
+			.update(leads)
+			.set({ optIn: 1, optInDate: sql`(datetime('now'))`, optOutDate: null })
+			.where(eq(leads.whatsapp, whatsapp));
 	}
 
 	async optOut(whatsapp: string): Promise<void> {
 		await this.db
-			.prepare(`UPDATE ${this.table} SET opt_in = 0, opt_out_date = datetime('now') WHERE whatsapp = ?`)
-			.bind(whatsapp)
-			.run();
+			.update(leads)
+			.set({ optIn: 0, optOutDate: sql`(datetime('now'))` })
+			.where(eq(leads.whatsapp, whatsapp));
 	}
 
 	async isOptIn(whatsapp: string): Promise<boolean> {
-		const row = await this.db.prepare(`SELECT opt_in FROM ${this.table} WHERE whatsapp = ?`).bind(whatsapp).first<{ opt_in: number }>();
-		return !!row?.opt_in;
+		const r = await this.db.select({ optIn: leads.optIn }).from(leads).where(eq(leads.whatsapp, whatsapp)).limit(1);
+		return !!r[0]?.optIn;
 	}
 
 	async setFunnelState(whatsapp: string, state: string): Promise<void> {
 		if (!this.funnelStates.includes(state)) {
 			throw new Error(`LeadStore: unknown funnel state "${state}". Allowed: ${this.funnelStates.join(', ')}`);
 		}
-		await this.db.prepare(`UPDATE ${this.table} SET funnel_state = ? WHERE whatsapp = ?`).bind(state, whatsapp).run();
+		await this.db.update(leads).set({ funnelState: state }).where(eq(leads.whatsapp, whatsapp));
 	}
 }

@@ -29,7 +29,8 @@
 		"test:watch": "vitest",
 		"test:coverage": "vitest run --coverage",
 		"test:unit": "vitest run -c vitest.config.unit.ts",
-		"test:mutate": "stryker run"
+		"test:mutate": "stryker run",
+		"db:generate": "drizzle-kit generate"
 	},
 	"keywords": [
 		"whatsapp",
@@ -49,8 +50,12 @@
 		"openai": "^4.0.0"
 	},
 	"peerDependenciesMeta": {
-		"hono": { "optional": true },
-		"openai": { "optional": true }
+		"hono": {
+			"optional": true
+		},
+		"openai": {
+			"optional": true
+		}
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.5.16",
@@ -58,10 +63,14 @@
 		"@stryker-mutator/core": "^9.6.1",
 		"@stryker-mutator/vitest-runner": "^9.6.1",
 		"@vitest/coverage-istanbul": "^2.0.5",
+		"drizzle-kit": "^0.30.6",
 		"hono": "^4.4.4",
 		"openai": "~4.57.0",
 		"typescript": "^5.6.0",
 		"vitest": "^2.0.5"
 	},
-	"license": "MIT"
+	"license": "MIT",
+	"dependencies": {
+		"drizzle-orm": "^0.38.4"
+	}
 }

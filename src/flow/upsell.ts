@@ -127,7 +127,7 @@ export class Upsell {
 		if (this.reminder && this.leads) {
 			try {
 				const lead = await this.leads.get(whatsapp);
-				if (lead?.funnel_state === this.funnelState) {
+				if (lead?.funnelState === this.funnelState) {
 					return await this.sendReminder(whatsapp, vars);
 				}
 			} catch (e) {
