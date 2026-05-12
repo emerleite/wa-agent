@@ -42,6 +42,10 @@ import {
 	definePreference,
 	HybridSearch,
 	WhatsAppClient,
+	LLMIntentClassifier,
+	PolicyGate,
+	defaultPipeline,
+	AuditEmitter,
 } from 'wa-agent';
 
 // Typed preference for delivery format
@@ -76,6 +80,43 @@ function init(env) {
 		helpText: 'Type "help" any time to see what I can do.',
 	});
 
+	const assistant = new OpenAIAssistant({ client: azure, assistantId: env.ASSISTANT_ID });
+	const summarizer = new Summarizer({ client: azure, model: 'gpt-4o-mini' });
+
+	// AI is premium-only; cap-free users hit the gate and see the Upsell.
+	const gate = new AccessGate({ tierProvider, allowedTiers: ['premium', 'lifetime'], freeMessageLimit: 0 });
+
+	// --- Pipeline: intent → policy → LLM → audit ---
+	// Bots opt in by passing `pipeline` to the Agent. Custom intent enum +
+	// one custom guard ("block messages containing a phone number") drive
+	// the example. Real bots wire `classify` to Vercel AI SDK / OpenAI / etc.
+	const INTENTS = ['question', 'booking', 'cancel', 'other'];
+	const classifier = new LLMIntentClassifier({
+		intents: INTENTS,
+		fallback: 'other',
+		classify: async (text) => {
+			// Stub: keyword classifier so the example runs without an LLM call.
+			// Replace with `generateObject({ model, schema: z.object({...}), prompt: text })`.
+			const t = text.toLowerCase();
+			if (/book|agend/.test(t)) return { intent: 'booking', confidence: 0.85 };
+			if (/cancel/.test(t)) return { intent: 'cancel', confidence: 0.85 };
+			if (/\?$/.test(t)) return { intent: 'question', confidence: 0.7 };
+			return { intent: 'other', confidence: 0.5 };
+		},
+	});
+
+	const phoneRegex = /\+?\d[\d\s().-]{8,}/;
+	const policy = new PolicyGate({
+		accessGate: gate,
+		predicates: [
+			// Block messages containing a phone number — they belong with a human.
+			(ctx) =>
+				phoneRegex.test(ctx.text)
+					? { proceed: false, reason: 'contains_phone_number', action: 'escalate' }
+					: null,
+		],
+	});
+
 	agent = new Agent({
 		whatsapp: {
 			endpoint: env.META_WA_ENDPOINT,
@@ -84,18 +125,27 @@ function init(env) {
 			appSecret: env.META_APP_SECRET,
 		},
 		db: env.DB,
-		ai: new OpenAIAssistant({ client: azure, assistantId: env.ASSISTANT_ID }),
-		summarizer: new Summarizer({ client: azure, model: 'gpt-4o-mini' }),
+		ai: assistant,
+		summarizer,
 		tierProvider,
 		onboarding,
+		events: { env }, // env.EVENTS Analytics Engine binding (or no-op if absent)
+		pipeline: defaultPipeline({
+			ai: assistant,
+			summarizer,
+			intent: classifier,
+			policy,
+			emit: () => Promise.resolve(), // wired by Agent below
+			modelName: 'openai-assistant',
+		}),
 	});
+	// Hand the Agent's bound emit to the pipeline's audit step so events flow
+	// through the same Analytics Engine dataset as the rest of the framework.
+	agent.pipeline.replaceStep('audit', new AuditEmitter({ emit: agent.emit }));
 
 	const transcriber = new Transcriber({ client: azure });
 	const usage = new UsageCounter({ db: agent.db });
 	const prefs = new PreferenceStore({ db: agent.db });
-
-	// AI is premium-only; cap-free users hit the gate and see the Upsell.
-	const gate = new AccessGate({ tierProvider, allowedTiers: ['premium', 'lifetime'], freeMessageLimit: 0 });
 
 	const upsell = new Upsell({
 		client,

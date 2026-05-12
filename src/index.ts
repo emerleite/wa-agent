@@ -96,6 +96,25 @@ export { ChannelOptOuts } from './channel/channel_opt_outs.js';
 export type { ChannelOptOutsOptions } from './channel/channel_opt_outs.js';
 export type { ChannelOptOutRow } from './db/schema/channel_opt_outs.js';
 
+// Agent pipeline (v0.2+) — intent → policy → LLM → audit
+export { AgentPipeline, LLMIntentClassifier, PolicyGate, LLMResponder, AuditEmitter, defaultPipeline, emptyDecision } from './pipeline/index.js';
+export type {
+	PipelineAction,
+	PipelineContext,
+	PipelineDecision,
+	PipelineStep,
+	StepResult,
+	IntentResult,
+	IntentClassifyFn,
+	LLMIntentClassifierOptions,
+	PolicyVerdict,
+	PolicyPredicate,
+	PolicyGateOptions,
+	LLMResponderOptions,
+	AuditEmitterOptions,
+	DefaultPipelineOptions,
+} from './pipeline/index.js';
+
 // Events (v0.2+) — Zod-validated event stream + Analytics Engine sink
 export {
 	makeEmit,

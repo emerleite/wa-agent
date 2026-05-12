@@ -594,6 +594,69 @@ await deliveryMode.get(prefs, whatsapp)            // narrowed to 'text' | 'audi
 
 Use `definePreference<string>(key, default)` (explicit generic) when you want a free-form preference without an allowed list.
 
+### Events (Analytics Engine)
+
+Auto-emitted, Zod-validated. Opt in by passing the AE binding to the Agent:
+
+```js
+agent = new Agent({
+	whatsapp: { /* ... */ },
+	db: env.DB,
+	events: { env, tenantId: 'tenant_abc' },  // env.EVENTS = AnalyticsEngineDataset
+})
+```
+
+The framework auto-emits 9 event types (`message_inbound`, `opt_in`, `opt_out`, `gate_blocked`, `broadcast_sent`, `plan_day_delivered`, `agent_decision`, `agent_outcome`, `error`). Stores accept an `emit?: Emit` callback if you want to wire them outside the Agent. No-ops gracefully when `env.EVENTS` is absent.
+
+`agent.emit(...)` is the same bound callable — use it to fire custom events from handlers (they go through the same Zod schema). Define your own event types alongside `FrameworkEventSchema` and call `env.EVENTS.writeDataPoint(...)` directly if you need shapes outside the framework's set.
+
+### Agent pipeline (intent → policy → LLM → audit)
+
+Opinionated composition: classify, gate, respond, audit. Opt in by passing a `pipeline` to the Agent; `reply.ai(text)` routes through it instead of calling `AIClient.chat()` directly.
+
+```js
+import { defaultPipeline, LLMIntentClassifier, PolicyGate } from 'wa-agent'
+
+const INTENTS = ['question', 'booking', 'cancel', 'other']
+const classifier = new LLMIntentClassifier({
+	intents: INTENTS,
+	fallback: 'other',
+	classify: async (text) => {
+		const { object } = await generateObject({
+			model: openai('gpt-4o-mini'),
+			schema: z.object({ intent: z.enum(INTENTS), confidence: z.number() }),
+			prompt: text,
+		})
+		return object
+	},
+})
+
+const phoneRegex = /\+?\d[\d\s().-]{8,}/
+const policy = new PolicyGate({
+	accessGate,   // existing AccessGate from the framework
+	quietHours,   // existing QuietHours
+	predicates: [
+		// Drop in any predicate: crisis keywords, language detection, rate limits.
+		(ctx) => phoneRegex.test(ctx.text) ? { proceed: false, reason: 'phone', action: 'escalate' } : null,
+	],
+})
+
+agent = new Agent({
+	/* ... */
+	pipeline: defaultPipeline({ ai: assistant, summarizer, intent: classifier, policy, emit: agent.emit, modelName: 'gpt-4o-mini' }),
+})
+```
+
+Steps are named (`intent`, `policy`, `llm`, `audit`) — swap, prepend, or append:
+
+```js
+agent.pipeline.replaceStep('llm', myCustomResponder)
+agent.pipeline.before('llm', extraGuard)
+agent.pipeline.after('llm', metricsRecorder)
+```
+
+When `policy` short-circuits, the LLM step is skipped but `audit` still fires — every turn produces an `agent_decision` event regardless of action taken.
+
 ## Lifecycle hooks
 
 ```js
@@ -806,7 +869,13 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 
 ## Status
 
-`v0.1.0` — extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
+`v0.2.0` — opinionated framework upgrade. Three breaking changes from v0.1:
+
+- **Drizzle ORM** is the only DB API. Every store (sessions, messages, leads, message_windows, queue, plans, broadcast, slots, usage, preferences, channel_opt_outs) takes `db: DB` (the Drizzle client) — no more `D1Database`. Construct once with `createDb(env.DB)`. Custom queries against app-defined tables (FTS5, etc.) use `db.all(sql\`...\`)` with `sql.raw()` for identifiers.
+- **Zod-validated event stream** writes 9 framework events (`message_inbound`, `opt_in`, `opt_out`, `gate_blocked`, `broadcast_sent`, `plan_day_delivered`, `agent_decision`, `agent_outcome`, `error`) to Cloudflare Analytics Engine via `env.EVENTS`. Auto-emitted from the lifecycle when `Agent` is constructed with `events: { env }`; no-ops if the binding is absent.
+- **Composable agent pipeline** (`intent → policy → LLM → audit`) routes `reply.ai()` through named, replaceable steps. Default classifier is SDK-agnostic — wire `generateObject`, OpenAI tool-calling, or a regex via the `classify` callback. Opt in by passing `pipeline: defaultPipeline({...})` to `Agent`. Omit it to keep the v0.1 direct-chat path.
+
+Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
 
 ## License
 

@@ -16,6 +16,8 @@ import type { TierProvider } from './gate/tier_provider.js';
 import type { AccessGate } from './gate/access_gate.js';
 import type { OnboardingFlow } from './flow/onboarding.js';
 import { makeEmit, type Emit, type EventsBindings } from './events/emit.js';
+import type { AgentPipeline } from './pipeline/pipeline.js';
+import type { PipelineContext } from './pipeline/types.js';
 import type { AIClient, ButtonsPayload, CtaUrlPayload, HandlerContext, ReplyHelper, SummarizerLike, InboundEnvelope, InboundMessage } from './types.js';
 
 export interface AgentOptions {
@@ -47,6 +49,15 @@ export interface AgentOptions {
 	 * event for multi-tenant SaaS use.
 	 */
 	events?: { env: EventsBindings; tenantId?: string };
+	/**
+	 * Composable agent pipeline (intent → policy → LLM → audit). When set,
+	 * `reply.ai(text)` routes the turn through this pipeline instead of
+	 * calling `AIClient.chat()` directly. Backward-compatible: omit to keep
+	 * the simple direct-chat path from v0.1.
+	 */
+	pipeline?: AgentPipeline | null;
+	/** Optional tenantId stamped on every per-turn pipeline context. */
+	tenantId?: string;
 }
 
 type Lifecycle = 'onFirstContact' | 'onMessage' | 'onError';
@@ -73,6 +84,8 @@ export class Agent {
 	readonly tierProvider: TierProvider | null;
 	readonly gate: AccessGate | null;
 	readonly onboarding: OnboardingFlow | null;
+	readonly pipeline: AgentPipeline | null;
+	readonly tenantId: string | null;
 	readonly _lifecycleHooks: Record<Lifecycle, Array<(payload: unknown) => void | Promise<void>>> = {
 		onFirstContact: [],
 		onMessage: [],
@@ -95,6 +108,8 @@ export class Agent {
 			queue = {},
 			contextHook = null,
 			events = undefined,
+			pipeline = null,
+			tenantId = null,
 		} = opts;
 
 		if (!whatsapp?.endpoint || !whatsapp?.token) {
@@ -113,6 +128,8 @@ export class Agent {
 		this.tierProvider = tierProvider;
 		this.gate = gate;
 		this.onboarding = onboarding;
+		this.pipeline = pipeline;
+		this.tenantId = tenantId;
 
 		this.queue = new D1CoalesceQueue({ db: this.db, ...queue });
 		this.session = stores.session ?? new SessionStore({ db: this.db });
@@ -293,6 +310,27 @@ export class Agent {
 			template: (data: { name: string; language?: string; components?: unknown[] }) => c.sendTemplate(whatsapp, data),
 			markRead: () => c.markRead(inboundWamid),
 			ai: async (text, opts) => {
+				if (self.pipeline) {
+					const pipeCtx: PipelineContext = {
+						whatsapp,
+						text,
+						wamid: inboundWamid,
+						threadId: opts?.threadId ?? null,
+						tenantId: self.tenantId ?? undefined,
+						traceId: crypto.randomUUID(),
+					};
+					const decision = await self.pipeline.run(pipeCtx);
+					if (decision.action !== 'reply' || !decision.reply) {
+						// Policy/intent short-circuited (silent or escalate). Caller may
+						// still want a deterministic shape — return what we have.
+						return { answer: decision.reply?.answer ?? null, threadId: opts?.threadId ?? '' };
+					}
+					const { answer, threadId: newTid } = decision.reply;
+					await self.session.set(whatsapp, { threadId: newTid });
+					await self.log.updateAnswer(inboundWamid, { body: text, response: answer, summary: answer });
+					if (answer) await c.sendText(whatsapp, answer);
+					return { answer, threadId: newTid };
+				}
 				if (!self.ai) throw new Error('Agent: no AI configured');
 				const { answer, threadId: newTid } = await self.ai.chat({ threadId: opts?.threadId ?? null, text });
 				await self.session.set(whatsapp, { threadId: newTid });
