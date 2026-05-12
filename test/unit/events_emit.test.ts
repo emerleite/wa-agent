@@ -5,6 +5,7 @@
  * assert the exact AE record shape without standing up a real binding.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { z } from 'zod';
 import { makeEmit, FrameworkEventSchema } from '../../src/events/index.js';
 
 function fakeEvents() {
@@ -176,5 +177,75 @@ describe('FrameworkEventSchema', () => {
 			whatsapp: '5551',
 		});
 		expect(r.success).toBe(false);
+	});
+});
+
+describe('makeEmit — generic over consumer schema', () => {
+	// A toy consumer schema with fields the framework doesn't model (`patientId`,
+	// `costBrl`). Validates the "psico-shaped consumer" path end-to-end.
+	const CustomEvent = z.object({
+		v: z.literal(1),
+		ts: z.string().datetime(),
+		traceId: z.string().uuid(),
+		tenantId: z.string().optional(),
+		type: z.literal('charge_paid'),
+		patientId: z.string().nullable(),
+		amountCents: z.number(),
+		costBrl: z.number(),
+	});
+	type CustomEvent = z.infer<typeof CustomEvent>;
+	type CustomInput = Omit<CustomEvent, 'v' | 'ts' | 'traceId'> & { traceId?: string };
+
+	function fakeEvents() {
+		const calls: unknown[] = [];
+		return {
+			calls,
+			EVENTS: {
+				writeDataPoint(dp: unknown) {
+					calls.push(dp);
+				},
+			} as AnalyticsEngineDataset,
+		};
+	}
+
+	it('validates against a custom schema + writes to AE with the same blob shape', async () => {
+		const e = fakeEvents();
+		const emit = makeEmit<CustomInput, CustomEvent>({
+			env: { EVENTS: e.EVENTS },
+			schema: CustomEvent,
+			extractDoubles: (ev) => [ev.amountCents, ev.costBrl],
+			idField: (ev) => ev.patientId ?? '',
+		});
+		await emit({
+			type: 'charge_paid',
+			tenantId: 'tenant_abc',
+			patientId: 'pat_42',
+			amountCents: 15000,
+			costBrl: 0.0234,
+		});
+		const dp = e.calls[0] as { blobs: string[]; doubles: number[]; indexes: string[] };
+		expect(dp.blobs[0]).toBe('charge_paid');
+		expect(dp.blobs[1]).toBe('tenant_abc');
+		expect(dp.blobs[2]).toBe('pat_42'); // idField controlled this
+		expect(dp.doubles.sort((a, b) => a - b)).toEqual([0.0234, 15000].sort((a, b) => a - b));
+		expect(dp.indexes[0]).toBe('tenant_abc');
+		const parsed = JSON.parse(dp.blobs[4]!);
+		expect(parsed.amountCents).toBe(15000);
+	});
+
+	it('rejects events the custom schema does not accept', async () => {
+		const e = fakeEvents();
+		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const emit = makeEmit<CustomInput, CustomEvent>({
+			env: { EVENTS: e.EVENTS },
+			schema: CustomEvent,
+			extractDoubles: (ev) => [ev.amountCents],
+			idField: (ev) => ev.patientId ?? '',
+		});
+		// @ts-expect-error testing runtime validation of unknown field shape
+		await emit({ type: 'charge_paid', patientId: 'pat_1', amountCents: 'not-a-number' });
+		expect(e.calls).toHaveLength(0);
+		expect(spy).toHaveBeenCalled();
+		spy.mockRestore();
 	});
 });
