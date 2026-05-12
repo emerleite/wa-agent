@@ -8,9 +8,11 @@ import type { DB } from '../db/client.js';
 import { plans as plansTable, planDays, userPlans, userPlanProgress, type Plan, type PlanDay, type UserPlan } from '../db/schema/plans.js';
 import { messageWindows } from '../db/schema/message_windows.js';
 import { leads } from '../db/schema/leads.js';
+import type { Emit } from '../events/emit.js';
 
 export interface SequentialPlanOptions {
 	db: DB;
+	emit?: Emit;
 }
 
 export type PlanRow = Plan;
@@ -38,10 +40,12 @@ export type AdvanceResult = { completed: true; day: number } | { completed: fals
 
 export class SequentialPlan {
 	readonly db: DB;
+	readonly emit: Emit | null;
 
-	constructor({ db }: SequentialPlanOptions) {
+	constructor({ db, emit = undefined }: SequentialPlanOptions) {
 		if (!db) throw new Error('SequentialPlan: db required');
 		this.db = db;
+		this.emit = emit ?? null;
 	}
 
 	async listActivePlans(): Promise<PlanRow[]> {
@@ -206,6 +210,7 @@ export class SequentialPlan {
 					.set({ lastDeliveredAt: sql`(datetime('now'))` })
 					.where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.planId, planId))),
 			]);
+			if (this.emit) await this.emit({ type: 'plan_day_delivered', whatsapp, planId, day });
 		} catch (e) {
 			console.error('[SequentialPlan] markDelivered:', e instanceof Error ? e.message : e);
 		}

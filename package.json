@@ -71,6 +71,7 @@
 	},
 	"license": "MIT",
 	"dependencies": {
-		"drizzle-orm": "^0.38.4"
+		"drizzle-orm": "^0.38.4",
+		"zod": "^3.25.76"
 	}
 }

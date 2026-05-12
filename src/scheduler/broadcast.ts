@@ -9,6 +9,7 @@ import { broadcastLog } from '../db/schema/broadcast.js';
 import { messageWindows } from '../db/schema/message_windows.js';
 import { leads } from '../db/schema/leads.js';
 import type { WhatsAppClient } from '../client/whatsapp.js';
+import type { Emit } from '../events/emit.js';
 
 export interface BroadcastOptions {
 	client: WhatsAppClient;
@@ -16,6 +17,7 @@ export interface BroadcastOptions {
 	channel: string;
 	sendIntervalMs?: number;
 	limit?: number;
+	emit?: Emit;
 }
 
 export interface BroadcastUser {
@@ -45,8 +47,9 @@ export class Broadcast {
 	readonly channel: string;
 	readonly sendIntervalMs: number;
 	readonly limit: number;
+	readonly emit: Emit | null;
 
-	constructor({ client, db, channel, sendIntervalMs = 1000, limit = 1500 }: BroadcastOptions) {
+	constructor({ client, db, channel, sendIntervalMs = 1000, limit = 1500, emit = undefined }: BroadcastOptions) {
 		if (!client) throw new Error('Broadcast: client required');
 		if (!db) throw new Error('Broadcast: db required');
 		if (!channel) throw new Error('Broadcast: channel required');
@@ -55,6 +58,7 @@ export class Broadcast {
 		this.channel = channel;
 		this.sendIntervalMs = sendIntervalMs;
 		this.limit = limit;
+		this.emit = emit ?? null;
 	}
 
 	async defaultAudience(): Promise<BroadcastUser[]> {
@@ -87,6 +91,7 @@ export class Broadcast {
 				const ok = await send(u);
 				if (ok) {
 					await this.logDelivered(u.whatsapp);
+					if (this.emit) await this.emit({ type: 'broadcast_sent', whatsapp: u.whatsapp, channel: this.channel });
 					delivered++;
 				} else {
 					skipped++;

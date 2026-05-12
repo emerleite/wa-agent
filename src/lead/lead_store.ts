@@ -1,17 +1,20 @@
 /**
  * User profile + opt-in tracking.
  *
- * From v0.2 onward: backed by Drizzle ORM.
+ * From v0.2 onward: backed by Drizzle ORM. Opt-in / opt-out auto-emit
+ * `opt_in` / `opt_out` events when an `emit` callback is provided.
  */
 import { eq, sql } from 'drizzle-orm';
 import type { DB } from '../db/client.js';
 import { leads, type Lead } from '../db/schema/leads.js';
+import type { Emit } from '../events/emit.js';
 
 const DEFAULT_FUNNEL = ['NEW', 'ONBOARDING', 'QUIZ', 'CHECKOUT', 'SUBSCRIBE'];
 
 export interface LeadStoreOptions {
 	db: DB;
 	funnelStates?: string[];
+	emit?: Emit;
 }
 
 export interface UpsertArgs {
@@ -24,11 +27,13 @@ export interface UpsertArgs {
 export class LeadStore {
 	readonly db: DB;
 	readonly funnelStates: string[];
+	readonly emit: Emit | null;
 
-	constructor({ db, funnelStates = DEFAULT_FUNNEL }: LeadStoreOptions) {
+	constructor({ db, funnelStates = DEFAULT_FUNNEL, emit = undefined }: LeadStoreOptions) {
 		if (!db) throw new Error('LeadStore: db required');
 		this.db = db;
 		this.funnelStates = funnelStates;
+		this.emit = emit ?? null;
 	}
 
 	async get(whatsapp: string): Promise<Lead | null> {
@@ -63,6 +68,7 @@ export class LeadStore {
 			.update(leads)
 			.set({ optIn: 1, optInDate: sql`(datetime('now'))`, optOutDate: null })
 			.where(eq(leads.whatsapp, whatsapp));
+		if (this.emit) await this.emit({ type: 'opt_in', whatsapp });
 	}
 
 	async optOut(whatsapp: string): Promise<void> {
@@ -70,6 +76,7 @@ export class LeadStore {
 			.update(leads)
 			.set({ optIn: 0, optOutDate: sql`(datetime('now'))` })
 			.where(eq(leads.whatsapp, whatsapp));
+		if (this.emit) await this.emit({ type: 'opt_out', whatsapp });
 	}
 
 	async isOptIn(whatsapp: string): Promise<boolean> {

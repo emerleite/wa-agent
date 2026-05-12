@@ -51,4 +51,24 @@ describe('AccessGate', () => {
 		const r = await gate.check('6');
 		expect(r.allowed).toBe(true);
 	});
+
+	it('emits gate_blocked only on denial when emit is wired', async () => {
+		const tier = new StaticTierProvider({
+			'7': { authorized: false, tier: 'free' },
+			'8': { authorized: true, tier: 'premium' },
+		});
+		const events: Array<{ type: string; whatsapp?: string; reason?: string }> = [];
+		const gate = new AccessGate({
+			tierProvider: tier,
+			log: fakeLog({ '7': 100 }),
+			freeMessageLimit: 10,
+			emit: async (ev) => {
+				events.push({ type: ev.type, whatsapp: (ev as { whatsapp?: string }).whatsapp, reason: (ev as { reason?: string }).reason });
+			},
+		});
+		await gate.check('7');
+		await gate.check('8');
+		// Denial fires, premium pass does not.
+		expect(events).toEqual([{ type: 'gate_blocked', whatsapp: '7', reason: 'denied' }]);
+	});
 });

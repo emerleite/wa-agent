@@ -60,4 +60,21 @@ describe('LeadStore', () => {
 		const r = await store.get('5551');
 		expect(r?.funnelState).toBe('CHECKOUT');
 	});
+
+	it('emits opt_in / opt_out events when an emit callback is wired', async () => {
+		const events: Array<{ type: string; whatsapp: string }> = [];
+		const emitter = new LeadStore({
+			db,
+			emit: async (ev) => {
+				events.push({ type: ev.type, whatsapp: (ev as { whatsapp?: string }).whatsapp ?? '' });
+			},
+		});
+		await emitter.upsert({ whatsapp: '5552' });
+		await emitter.optIn('5552');
+		await emitter.optOut('5552');
+		expect(events).toEqual([
+			{ type: 'opt_in', whatsapp: '5552' },
+			{ type: 'opt_out', whatsapp: '5552' },
+		]);
+	});
 });

@@ -15,6 +15,7 @@ import { createDb, type DB } from './db/client.js';
 import type { TierProvider } from './gate/tier_provider.js';
 import type { AccessGate } from './gate/access_gate.js';
 import type { OnboardingFlow } from './flow/onboarding.js';
+import { makeEmit, type Emit, type EventsBindings } from './events/emit.js';
 import type { AIClient, ButtonsPayload, CtaUrlPayload, HandlerContext, ReplyHelper, SummarizerLike, InboundEnvelope, InboundMessage } from './types.js';
 
 export interface AgentOptions {
@@ -39,6 +40,13 @@ export interface AgentOptions {
 	};
 	queue?: Partial<Omit<D1QueueOptions, 'db'>>;
 	contextHook?: ((ctx: HandlerContext) => Promise<Record<string, unknown>>) | null;
+	/**
+	 * Wire framework events to Cloudflare Analytics Engine. Pass `{ env }` to
+	 * pick up `env.EVENTS`; omit to silently no-op (useful for local dev or
+	 * bots that don't ship telemetry). `tenantId` flows through every emitted
+	 * event for multi-tenant SaaS use.
+	 */
+	events?: { env: EventsBindings; tenantId?: string };
 }
 
 type Lifecycle = 'onFirstContact' | 'onMessage' | 'onError';
@@ -47,6 +55,8 @@ export class Agent {
 	readonly client: WhatsAppClient;
 	/** Drizzle ORM client (v0.2+). Use `agent.db.select()/.insert()/...` in handlers. */
 	readonly db: DB;
+	/** Bound event emitter (no-op when no `events` config was supplied). */
+	readonly emit: Emit;
 	readonly queue: D1CoalesceQueue;
 	readonly session: SessionStore;
 	readonly log: MessageLog;
@@ -84,6 +94,7 @@ export class Agent {
 			stores = {},
 			queue = {},
 			contextHook = null,
+			events = undefined,
 		} = opts;
 
 		if (!whatsapp?.endpoint || !whatsapp?.token) {
@@ -95,6 +106,7 @@ export class Agent {
 		this.verifyToken = whatsapp.verifyToken ?? null;
 		this.appSecret = whatsapp.appSecret ?? null;
 		this.db = createDb(db);
+		this.emit = events ? makeEmit(events) : noOpEmit;
 		this.ai = ai;
 		this.summarizer = summarizer;
 		this.summarizeOver = summarizeOver;
@@ -105,7 +117,7 @@ export class Agent {
 		this.queue = new D1CoalesceQueue({ db: this.db, ...queue });
 		this.session = stores.session ?? new SessionStore({ db: this.db });
 		this.log = stores.log ?? new MessageLog({ db: this.db });
-		this.leads = stores.leads ?? new LeadStore({ db: this.db });
+		this.leads = stores.leads ?? new LeadStore({ db: this.db, emit: this.emit });
 		this.window = stores.window ?? new MessageWindow({ db: this.db });
 		this.contextHook = contextHook;
 
@@ -174,12 +186,26 @@ export class Agent {
 		}
 
 		const ctx = await this.buildContext(inbound);
+		await this.emit({
+			type: 'message_inbound',
+			whatsapp: inbound.whatsapp,
+			wamid: inbound.wamid,
+			messageType: inbound.type as 'text' | 'audio' | 'image' | 'button_reply' | 'list_reply' | 'template_button' | 'document' | 'interactive',
+			isFirstContact: ctx.isFirstContact,
+			fromAd: !!inbound.fromAd,
+		});
 		await this.runLifecycle('onMessage', ctx);
 
 		try {
 			await this.dispatch(ctx);
 		} catch (err) {
 			console.error('[Agent] dispatch error:', err instanceof Error ? err.stack || err.message : err);
+			await this.emit({
+				type: 'error',
+				whatsapp: inbound.whatsapp,
+				source: 'agent.dispatch',
+				message: err instanceof Error ? err.message : String(err),
+			});
 			await this.runLifecycle('onError', { ...ctx, error: err });
 		}
 	}
@@ -312,3 +338,5 @@ export class Agent {
 		}
 	}
 }
+
+const noOpEmit: Emit = async () => {};

@@ -141,4 +141,44 @@ describe('Broadcast', () => {
 		await b.run({ send: ({ whatsapp }) => client.sendText(whatsapp, 'x') });
 		expect(await b.wasDeliveredToday('5551')).toBe(true);
 	});
+
+	it('emits broadcast_sent per delivered recipient', async () => {
+		const client = new MockWhatsAppClient();
+		const events: Array<{ type: string; channel?: string }> = [];
+		await makeAudience({ whatsapp: '5551' });
+		await makeAudience({ whatsapp: '5552' });
+
+		const b = new Broadcast({
+			client: client as unknown as WhatsAppClient,
+			db,
+			channel: 'devotional',
+			sendIntervalMs: 0,
+			emit: async (ev) => {
+				events.push({ type: ev.type, channel: (ev as { channel?: string }).channel });
+			},
+		});
+		await b.run({ send: ({ whatsapp }) => client.sendText(whatsapp, 'hello') });
+		expect(events).toEqual([
+			{ type: 'broadcast_sent', channel: 'devotional' },
+			{ type: 'broadcast_sent', channel: 'devotional' },
+		]);
+	});
+
+	it('does NOT emit broadcast_sent when send() returns false', async () => {
+		const client = new MockWhatsAppClient();
+		const events: string[] = [];
+		await makeAudience({ whatsapp: '5551' });
+
+		const b = new Broadcast({
+			client: client as unknown as WhatsAppClient,
+			db,
+			channel: 'x',
+			sendIntervalMs: 0,
+			emit: async (ev) => {
+				events.push(ev.type);
+			},
+		});
+		await b.run({ send: async () => false });
+		expect(events).toEqual([]);
+	});
 });

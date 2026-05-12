@@ -96,6 +96,24 @@ export { ChannelOptOuts } from './channel/channel_opt_outs.js';
 export type { ChannelOptOutsOptions } from './channel/channel_opt_outs.js';
 export type { ChannelOptOutRow } from './db/schema/channel_opt_outs.js';
 
+// Events (v0.2+) — Zod-validated event stream + Analytics Engine sink
+export {
+	makeEmit,
+	FrameworkEventSchema,
+	MessageInboundEvent,
+	OptInEvent,
+	OptOutEvent,
+	GateBlockedEvent,
+	BroadcastSentEvent,
+	PlanDayDeliveredEvent,
+	AgentDecisionEvent,
+	AgentOutcomeEvent,
+	ErrorEvent,
+	BaseEventFields,
+	stampBase,
+} from './events/index.js';
+export type { Emit, EventsBindings, EmitOptions, FrameworkEvent, FrameworkEventType, FrameworkEventInput, EventInputBase } from './events/index.js';
+
 // Utils
 export { whatsappBold, stripMarkdown, chunkText, INTERACTIVE_BODY_MAX, TEXT_BODY_MAX } from './util/text.js';
 export { QuietHours } from './util/quiet_hours.js';

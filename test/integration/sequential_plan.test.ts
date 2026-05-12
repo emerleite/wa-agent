@@ -165,4 +165,22 @@ describe('SequentialPlan', () => {
 			expect((await plans.usersForDelivery({ minIntervalHours: 1 })).length).toBe(1);
 		});
 	});
+
+	it('markDelivered emits plan_day_delivered when emit is wired', async () => {
+		const events: Array<{ type: string; planId?: number; day?: number; whatsapp?: string }> = [];
+		const tracked = new SequentialPlan({
+			db,
+			emit: async (ev) => {
+				events.push({
+					type: ev.type,
+					planId: (ev as { planId?: number }).planId,
+					day: (ev as { day?: number }).day,
+					whatsapp: (ev as { whatsapp?: string }).whatsapp,
+				});
+			},
+		});
+		await tracked.enroll('5555', 1);
+		await tracked.markDelivered('5555', 1, 1);
+		expect(events).toEqual([{ type: 'plan_day_delivered', whatsapp: '5555', planId: 1, day: 1 }]);
+	});
 });
