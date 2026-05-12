@@ -5,12 +5,16 @@
  * and you want to feed *one* combined turn to the LLM, not three. Cloudflare Queues
  * have no per-key debounce and Durable Objects add complexity. This implements
  * **per-user debounce + coalesce** using only D1.
+ *
+ * From v0.2 onward: backed by Drizzle ORM.
  */
+import { and, asc, eq, lte, lt, sql } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { messageQueue } from '../db/schema/message_queue.js';
 import type { InboundEnvelope } from '../types.js';
 
 export interface D1QueueOptions {
-	db: D1Database;
-	table?: string;
+	db: DB;
 	debounceSeconds?: number;
 	maxAttempts?: number;
 	staleMinutes?: number;
@@ -21,7 +25,7 @@ export interface D1QueueOptions {
 
 export interface QueueRow {
 	id: number;
-	message_id: string;
+	message_id: string | null;
 	whatsapp: string;
 	payload: string;
 	status: 'pending' | 'processing' | 'done' | 'failed';
@@ -42,9 +46,29 @@ export interface BatchInfo {
 
 export type BatchHandler = (info: BatchInfo) => Promise<void>;
 
+/**
+ * Drizzle row → public QueueRow (snake_case for backwards compatibility).
+ * Kept stable so consumers reading `rows[].message_id` / `rows[].created_at`
+ * in their BatchHandler don't break across the Drizzle migration.
+ */
+function toQueueRow(r: typeof messageQueue.$inferSelect): QueueRow {
+	return {
+		id: r.id,
+		message_id: r.messageId,
+		whatsapp: r.whatsapp,
+		payload: r.payload,
+		status: r.status,
+		attempts: r.attempts,
+		scheduled_at: r.scheduledAt,
+		created_at: r.createdAt,
+		started_at: r.startedAt,
+		completed_at: r.completedAt,
+		error_message: r.errorMessage,
+	};
+}
+
 export class D1CoalesceQueue {
-	readonly db: D1Database;
-	readonly table: string;
+	readonly db: DB;
 	readonly debounceSeconds: number;
 	readonly maxAttempts: number;
 	readonly staleMinutes: number;
@@ -54,7 +78,6 @@ export class D1CoalesceQueue {
 
 	constructor({
 		db,
-		table = 'message_queue',
 		debounceSeconds = 3,
 		maxAttempts = 3,
 		staleMinutes = 5,
@@ -64,7 +87,6 @@ export class D1CoalesceQueue {
 	}: D1QueueOptions) {
 		if (!db) throw new Error('D1CoalesceQueue: db required');
 		this.db = db;
-		this.table = table;
 		this.debounceSeconds = debounceSeconds;
 		this.maxAttempts = maxAttempts;
 		this.staleMinutes = staleMinutes;
@@ -80,25 +102,22 @@ export class D1CoalesceQueue {
 		const wamid = message.id;
 		const whatsapp = message.from;
 		const payload = JSON.stringify(envelope);
+		const debounceExpr = sql.raw(`(datetime('now', '+${this.debounceSeconds} seconds'))`);
 
 		const ins = await this.db
-			.prepare(
-				`INSERT OR IGNORE INTO ${this.table} (message_id, whatsapp, payload, scheduled_at)
-				 VALUES (?, ?, ?, datetime('now', '+${this.debounceSeconds} seconds'))`
-			)
-			.bind(wamid, whatsapp, payload)
-			.run();
+			.insert(messageQueue)
+			.values({ messageId: wamid, whatsapp, payload, scheduledAt: debounceExpr })
+			.onConflictDoNothing({ target: messageQueue.messageId })
+			.returning({ id: messageQueue.id });
 
-		if (ins.meta.changes === 0) return false;
+		if (ins.length === 0) return false;
 
+		// Push the debounce forward for every still-pending row on this user so the
+		// whole burst settles to the same fire time.
 		await this.db
-			.prepare(
-				`UPDATE ${this.table}
-				 SET scheduled_at = datetime('now', '+${this.debounceSeconds} seconds')
-				 WHERE whatsapp = ? AND status = 'pending'`
-			)
-			.bind(whatsapp)
-			.run();
+			.update(messageQueue)
+			.set({ scheduledAt: debounceExpr })
+			.where(and(eq(messageQueue.whatsapp, whatsapp), eq(messageQueue.status, 'pending')));
 
 		return true;
 	}
@@ -132,81 +151,94 @@ export class D1CoalesceQueue {
 	}
 
 	async claimBatch(): Promise<QueueRow[]> {
+		// Pick the user whose oldest pending row is due.
 		const next = await this.db
-			.prepare(
-				`SELECT whatsapp FROM ${this.table}
-				 WHERE status = 'pending' AND scheduled_at <= datetime('now')
-				 ORDER BY created_at ASC
-				 LIMIT 1`
-			)
-			.first<{ whatsapp: string }>();
-		if (!next) return [];
+			.select({ whatsapp: messageQueue.whatsapp })
+			.from(messageQueue)
+			.where(and(eq(messageQueue.status, 'pending'), lte(messageQueue.scheduledAt, sql`(datetime('now'))`)))
+			.orderBy(asc(messageQueue.createdAt))
+			.limit(1);
+		if (!next[0]) return [];
 
-		// Atomic claim: UPDATE…RETURNING ensures only the invocation that
-		// flips a row from pending→processing receives it. The previous
-		// implementation used db.batch([UPDATE, SELECT WHERE started_at >= now-3s])
-		// — under concurrent processAll() (e.g. webhook waitUntil + every-minute
-		// cron) the SELECT could return rows the other invocation just claimed,
-		// so the same message would be handed to two handlers and sent twice.
-		const result = await this.db
-			.prepare(
-				`UPDATE ${this.table}
-				 SET status = 'processing', attempts = attempts + 1, started_at = datetime('now')
-				 WHERE whatsapp = ? AND status = 'pending' AND scheduled_at <= datetime('now')
-				 RETURNING *`
+		// Atomic claim: UPDATE…RETURNING ensures only the invocation that flips a
+		// row from pending→processing receives it. Without RETURNING, two
+		// concurrent processAll() runs (e.g. webhook waitUntil + every-minute
+		// cron) could each SELECT the same rows and double-dispatch.
+		const claimed = await this.db
+			.update(messageQueue)
+			.set({
+				status: 'processing',
+				attempts: sql`${messageQueue.attempts} + 1`,
+				startedAt: sql`(datetime('now'))`,
+			})
+			.where(
+				and(
+					eq(messageQueue.whatsapp, next[0].whatsapp),
+					eq(messageQueue.status, 'pending'),
+					lte(messageQueue.scheduledAt, sql`(datetime('now'))`)
+				)
 			)
-			.bind(next.whatsapp)
-			.all<QueueRow>();
+			.returning();
 
-		const rows = result.results ?? [];
-		// RETURNING doesn't guarantee row order; sort by created_at so the
-		// caller sees the burst in send order.
+		// RETURNING doesn't guarantee row order; sort by created_at so the caller
+		// sees the burst in send order.
+		const rows = claimed.map(toQueueRow);
 		rows.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
 		return rows;
 	}
 
 	async completeBatch(ids: number[]): Promise<void> {
 		if (!ids.length) return;
-		await this.db.batch(
+		await Promise.all(
 			ids.map((id) =>
-				this.db.prepare(`UPDATE ${this.table} SET status = 'done', completed_at = datetime('now') WHERE id = ?`).bind(id)
+				this.db
+					.update(messageQueue)
+					.set({ status: 'done', completedAt: sql`(datetime('now'))` })
+					.where(eq(messageQueue.id, id))
 			)
 		);
 	}
 
 	async failBatch(ids: number[], errorMessage: string): Promise<void> {
 		if (!ids.length) return;
-		await this.db.batch(
+		const retryExpr = sql.raw(`(datetime('now', '+${this.retryDelaySeconds} seconds'))`);
+		const maxAttempts = this.maxAttempts;
+		await Promise.all(
 			ids.map((id) =>
 				this.db
-					.prepare(
-						`UPDATE ${this.table}
-						 SET status = CASE WHEN attempts >= ? THEN 'failed' ELSE 'pending' END,
-							 error_message = ?,
-							 started_at = NULL,
-							 scheduled_at = datetime('now', '+${this.retryDelaySeconds} seconds')
-						 WHERE id = ?`
-					)
-					.bind(this.maxAttempts, errorMessage, id)
+					.update(messageQueue)
+					.set({
+						status: sql`CASE WHEN ${messageQueue.attempts} >= ${maxAttempts} THEN 'failed' ELSE 'pending' END`,
+						errorMessage,
+						startedAt: null,
+						scheduledAt: retryExpr,
+					})
+					.where(eq(messageQueue.id, id))
 			)
 		);
 	}
 
 	async recoverStale(): Promise<void> {
 		await this.db
-			.prepare(
-				`UPDATE ${this.table}
-				 SET status = 'pending', started_at = NULL
-				 WHERE status = 'processing'
-				 AND started_at < datetime('now', '-${this.staleMinutes} minutes')`
-			)
-			.run();
+			.update(messageQueue)
+			.set({ status: 'pending', startedAt: null })
+			.where(
+				and(
+					eq(messageQueue.status, 'processing'),
+					lt(messageQueue.startedAt, sql.raw(`(datetime('now', '-${this.staleMinutes} minutes'))`))
+				)
+			);
 	}
 
 	async cleanup(): Promise<void> {
 		await this.db
-			.prepare(`DELETE FROM ${this.table} WHERE status = 'done' AND completed_at < datetime('now', '-${this.cleanupAfterDays} days')`)
-			.run();
+			.delete(messageQueue)
+			.where(
+				and(
+					eq(messageQueue.status, 'done'),
+					lt(messageQueue.completedAt, sql.raw(`(datetime('now', '-${this.cleanupAfterDays} days'))`))
+				)
+			);
 	}
 }
 

@@ -1,141 +1,112 @@
 /**
  * Sequential, multi-day content plans (drip campaigns, reading plans).
+ *
+ * From v0.2 onward: backed by Drizzle ORM.
  */
+import { and, asc, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { plans as plansTable, planDays, userPlans, userPlanProgress, type Plan, type PlanDay, type UserPlan } from '../db/schema/plans.js';
+import { messageWindows } from '../db/schema/message_windows.js';
+import { leads } from '../db/schema/leads.js';
+
 export interface SequentialPlanOptions {
-	db: D1Database;
-	planTable?: string;
-	dayTable?: string;
-	userPlanTable?: string;
-	progressTable?: string;
+	db: DB;
 }
 
-export interface PlanRow {
-	id: number;
-	slug: string;
-	title: string;
-	description: string | null;
-	duration_days: number;
-	is_active: number;
-}
+export type PlanRow = Plan;
+export type DayRow = PlanDay;
 
-export interface DayRow {
-	id: number;
-	plan_id: number;
-	day: number;
-	title: string;
-	content: string;
-	extra_json: string | null;
-}
-
-export interface UserPlanRow {
-	id: number;
-	whatsapp: string;
-	plan_id: number;
-	current_day: number;
-	started_at: string;
-	completed_at: string | null;
-	is_active: number;
-	/**
-	 * Timestamp of the last successful delivery to this user for this plan.
-	 * Set by `markDelivered`. Read by `usersForDelivery` to enforce the
-	 * minimum-interval cadence (default 20h) regardless of calendar date.
-	 */
-	last_delivered_at: string | null;
+/**
+ * Enrollment row enriched with plan title / slug / duration when read via
+ * `getActiveEnrollment`. Bare `select().from(userPlans)` returns just UserPlan.
+ */
+export interface UserPlanRow extends UserPlan {
 	title?: string;
 	slug?: string;
-	duration_days?: number;
+	durationDays?: number;
 }
 
 export interface DeliveryUser {
 	whatsapp: string;
-	plan_id: number;
-	current_day: number;
+	planId: number;
+	currentDay: number;
 	title: string;
-	duration_days: number;
+	durationDays: number;
 }
 
 export type AdvanceResult = { completed: true; day: number } | { completed: false; nextDay: number };
 
 export class SequentialPlan {
-	readonly db: D1Database;
-	readonly planTable: string;
-	readonly dayTable: string;
-	readonly userPlanTable: string;
-	readonly progressTable: string;
+	readonly db: DB;
 
-	constructor({
-		db,
-		planTable = 'plans',
-		dayTable = 'plan_days',
-		userPlanTable = 'user_plans',
-		progressTable = 'user_plan_progress',
-	}: SequentialPlanOptions) {
+	constructor({ db }: SequentialPlanOptions) {
 		if (!db) throw new Error('SequentialPlan: db required');
 		this.db = db;
-		this.planTable = planTable;
-		this.dayTable = dayTable;
-		this.userPlanTable = userPlanTable;
-		this.progressTable = progressTable;
 	}
 
 	async listActivePlans(): Promise<PlanRow[]> {
-		const r = await this.db.prepare(`SELECT * FROM ${this.planTable} WHERE is_active = 1 ORDER BY duration_days ASC`).all<PlanRow>();
-		return r.results ?? [];
+		return await this.db.select().from(plansTable).where(eq(plansTable.isActive, 1)).orderBy(asc(plansTable.durationDays));
 	}
 
 	async getPlanById(id: number): Promise<PlanRow | null> {
-		return await this.db.prepare(`SELECT * FROM ${this.planTable} WHERE id = ?`).bind(id).first<PlanRow>();
+		const r = await this.db.select().from(plansTable).where(eq(plansTable.id, id)).limit(1);
+		return r[0] ?? null;
 	}
 
 	async getPlanBySlug(slug: string): Promise<PlanRow | null> {
-		return await this.db.prepare(`SELECT * FROM ${this.planTable} WHERE slug = ?`).bind(slug).first<PlanRow>();
+		const r = await this.db.select().from(plansTable).where(eq(plansTable.slug, slug)).limit(1);
+		return r[0] ?? null;
 	}
 
 	async getDay(planId: number, day: number): Promise<DayRow | null> {
-		return await this.db.prepare(`SELECT * FROM ${this.dayTable} WHERE plan_id = ? AND day = ?`).bind(planId, day).first<DayRow>();
+		const r = await this.db.select().from(planDays).where(and(eq(planDays.planId, planId), eq(planDays.day, day))).limit(1);
+		return r[0] ?? null;
 	}
 
 	async enroll(whatsapp: string, planId: number): Promise<boolean> {
+		// Deactivate other active enrollments for this user, then upsert the new one.
+		await this.db.update(userPlans).set({ isActive: 0 }).where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.isActive, 1)));
 		await this.db
-			.prepare(`UPDATE ${this.userPlanTable} SET is_active = 0 WHERE whatsapp = ? AND is_active = 1`)
-			.bind(whatsapp)
-			.run();
-		await this.db
-			.prepare(
-				`INSERT INTO ${this.userPlanTable} (whatsapp, plan_id, current_day, is_active)
-				 VALUES (?, ?, 1, 1)
-				 ON CONFLICT(whatsapp, plan_id) DO UPDATE SET
-				   current_day = 1, is_active = 1, started_at = datetime('now'), completed_at = NULL`
-			)
-			.bind(whatsapp, planId)
-			.run();
+			.insert(userPlans)
+			.values({ whatsapp, planId, currentDay: 1, isActive: 1 })
+			.onConflictDoUpdate({
+				target: [userPlans.whatsapp, userPlans.planId],
+				set: { currentDay: 1, isActive: 1, startedAt: sql`(datetime('now'))`, completedAt: null },
+			});
 		return true;
 	}
 
 	async unenroll(whatsapp: string): Promise<void> {
-		await this.db
-			.prepare(`UPDATE ${this.userPlanTable} SET is_active = 0 WHERE whatsapp = ? AND is_active = 1`)
-			.bind(whatsapp)
-			.run();
+		await this.db.update(userPlans).set({ isActive: 0 }).where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.isActive, 1)));
 	}
 
 	async getActiveEnrollment(whatsapp: string): Promise<UserPlanRow | null> {
-		return await this.db
-			.prepare(
-				`SELECT up.*, p.title, p.slug, p.duration_days
-				 FROM ${this.userPlanTable} up
-				 JOIN ${this.planTable} p ON p.id = up.plan_id
-				 WHERE up.whatsapp = ? AND up.is_active = 1`
-			)
-			.bind(whatsapp)
-			.first<UserPlanRow>();
+		const r = await this.db
+			.select({
+				id: userPlans.id,
+				whatsapp: userPlans.whatsapp,
+				planId: userPlans.planId,
+				currentDay: userPlans.currentDay,
+				startedAt: userPlans.startedAt,
+				completedAt: userPlans.completedAt,
+				isActive: userPlans.isActive,
+				lastDeliveredAt: userPlans.lastDeliveredAt,
+				title: plansTable.title,
+				slug: plansTable.slug,
+				durationDays: plansTable.durationDays,
+			})
+			.from(userPlans)
+			.innerJoin(plansTable, eq(plansTable.id, userPlans.planId))
+			.where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.isActive, 1)))
+			.limit(1);
+		return r[0] ?? null;
 	}
 
 	async markDone(whatsapp: string, planId: number, day: number): Promise<AdvanceResult> {
 		await this.db
-			.prepare(`INSERT OR IGNORE INTO ${this.progressTable} (whatsapp, plan_id, day) VALUES (?, ?, ?)`)
-			.bind(whatsapp, planId, day)
-			.run();
+			.insert(userPlanProgress)
+			.values({ whatsapp, planId, day })
+			.onConflictDoNothing({ target: [userPlanProgress.whatsapp, userPlanProgress.planId, userPlanProgress.day] });
 		return await this.advance(whatsapp, planId, day);
 	}
 
@@ -147,40 +118,47 @@ export class SequentialPlan {
 		const plan = await this.getPlanById(planId);
 		if (!plan) return { completed: true, day: fromDay };
 		const next = fromDay + 1;
-		if (next > plan.duration_days) {
+		if (next > plan.durationDays) {
 			await this.db
-				.prepare(
-					`UPDATE ${this.userPlanTable}
-					 SET is_active = 0, completed_at = datetime('now'), current_day = ?
-					 WHERE whatsapp = ? AND plan_id = ?`
-				)
-				.bind(fromDay, whatsapp, planId)
-				.run();
+				.update(userPlans)
+				.set({ isActive: 0, completedAt: sql`(datetime('now'))`, currentDay: fromDay })
+				.where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.planId, planId)));
 			return { completed: true, day: fromDay };
 		}
 		await this.db
-			.prepare(`UPDATE ${this.userPlanTable} SET current_day = ? WHERE whatsapp = ? AND plan_id = ?`)
-			.bind(next, whatsapp, planId)
-			.run();
+			.update(userPlans)
+			.set({ currentDay: next })
+			.where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.planId, planId)));
 		return { completed: false, nextDay: next };
 	}
 
 	async autoAdvanceStale({ staleHours = 24 }: { staleHours?: number } = {}): Promise<number> {
-		const r = await this.db
-			.prepare(
-				`SELECT up.whatsapp, up.plan_id, up.current_day, p.duration_days
-				 FROM ${this.userPlanTable} up
-				 JOIN ${this.planTable} p ON p.id = up.plan_id
-				 JOIN ${this.progressTable} pp
-					 ON pp.whatsapp = up.whatsapp AND pp.plan_id = up.plan_id AND pp.day = up.current_day
-				 WHERE up.is_active = 1
-					 AND pp.completed_at < datetime('now', '-${staleHours} hours')`
+		const stale = await this.db
+			.select({
+				whatsapp: userPlans.whatsapp,
+				planId: userPlans.planId,
+				currentDay: userPlans.currentDay,
+				durationDays: plansTable.durationDays,
+			})
+			.from(userPlans)
+			.innerJoin(plansTable, eq(plansTable.id, userPlans.planId))
+			.innerJoin(
+				userPlanProgress,
+				and(
+					eq(userPlanProgress.whatsapp, userPlans.whatsapp),
+					eq(userPlanProgress.planId, userPlans.planId),
+					eq(userPlanProgress.day, userPlans.currentDay)
+				)
 			)
-			.all<{ whatsapp: string; plan_id: number; current_day: number; duration_days: number }>();
+			.where(
+				and(
+					eq(userPlans.isActive, 1),
+					lt(userPlanProgress.completedAt, sql.raw(`(datetime('now', '-${staleHours} hours'))`))
+				)
+			);
 
-		const stale = r.results ?? [];
 		for (const s of stale) {
-			await this.skipDay(s.whatsapp, s.plan_id, s.current_day);
+			await this.skipDay(s.whatsapp, s.planId, s.currentDay);
 		}
 		return stale.length;
 	}
@@ -190,43 +168,43 @@ export class SequentialPlan {
 	 *
 	 * Gates: active enrollment, opt-in lead, open Meta message window, and
 	 * `last_delivered_at` either NULL or older than `minIntervalHours` (default 20h).
-	 * The interval gate is per-enrollment — it survives midnight rollovers
-	 * and click-and-cron races that calendar-date filtering can't catch.
 	 */
 	async usersForDelivery({ limit = 500, minIntervalHours = 20 }: { limit?: number; minIntervalHours?: number } = {}): Promise<DeliveryUser[]> {
-		const r = await this.db
-			.prepare(
-				`SELECT up.whatsapp, up.plan_id, up.current_day, p.title, p.duration_days
-				 FROM ${this.userPlanTable} up
-				 JOIN ${this.planTable} p ON p.id = up.plan_id
-				 JOIN message_windows mw ON mw.whatsapp = up.whatsapp AND mw.end_time > datetime('now')
-				 JOIN leads l ON l.whatsapp = up.whatsapp AND l.opt_in = 1
-				 WHERE up.is_active = 1
-				   AND (up.last_delivered_at IS NULL
-				        OR up.last_delivered_at < datetime('now', '-${minIntervalHours} hours'))
-				 LIMIT ?`
-			)
-			.bind(limit)
-			.all<DeliveryUser>();
-		return r.results ?? [];
+		const intervalExpr = sql.raw(`(datetime('now', '-${minIntervalHours} hours'))`);
+		return await this.db
+			.select({
+				whatsapp: userPlans.whatsapp,
+				planId: userPlans.planId,
+				currentDay: userPlans.currentDay,
+				title: plansTable.title,
+				durationDays: plansTable.durationDays,
+			})
+			.from(userPlans)
+			.innerJoin(plansTable, eq(plansTable.id, userPlans.planId))
+			.innerJoin(messageWindows, and(eq(messageWindows.whatsapp, userPlans.whatsapp), sql`${messageWindows.endTime} > datetime('now')`))
+			.innerJoin(leads, and(eq(leads.whatsapp, userPlans.whatsapp), eq(leads.optIn, 1)))
+			.where(and(eq(userPlans.isActive, 1), or(isNull(userPlans.lastDeliveredAt), lt(userPlans.lastDeliveredAt, intervalExpr))))
+			.limit(limit);
 	}
 
 	/**
 	 * Record a successful delivery for cadence + analytics.
 	 *
-	 * Writes the progress row (idempotent on (whatsapp, plan_id, day)) AND
-	 * bumps `user_plans.last_delivered_at` to NOW so `usersForDelivery`
-	 * won't redeliver until at least `minIntervalHours` later.
+	 * Writes the progress row (idempotent) AND bumps `user_plans.last_delivered_at`
+	 * to NOW so `usersForDelivery` won't redeliver until at least `minIntervalHours`
+	 * later.
 	 */
 	async markDelivered(whatsapp: string, planId: number, day: number): Promise<void> {
 		try {
 			await this.db.batch([
 				this.db
-					.prepare(`INSERT OR IGNORE INTO ${this.progressTable} (whatsapp, plan_id, day) VALUES (?, ?, ?)`)
-					.bind(whatsapp, planId, day),
+					.insert(userPlanProgress)
+					.values({ whatsapp, planId, day })
+					.onConflictDoNothing({ target: [userPlanProgress.whatsapp, userPlanProgress.planId, userPlanProgress.day] }),
 				this.db
-					.prepare(`UPDATE ${this.userPlanTable} SET last_delivered_at = datetime('now') WHERE whatsapp = ? AND plan_id = ?`)
-					.bind(whatsapp, planId),
+					.update(userPlans)
+					.set({ lastDeliveredAt: sql`(datetime('now'))` })
+					.where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.planId, planId))),
 			]);
 		} catch (e) {
 			console.error('[SequentialPlan] markDelivered:', e instanceof Error ? e.message : e);

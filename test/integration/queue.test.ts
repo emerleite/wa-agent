@@ -2,11 +2,13 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
 import { D1CoalesceQueue } from '../../src/queue/d1_coalesce_queue.js';
 import { envelope, textMessage } from '../fixtures/webhooks.js';
+import { createDb } from '../../src/db/client.js';
 
-const db = (env as { DB: D1Database }).DB;
+const d1 = (env as { DB: D1Database }).DB;
+const db = createDb(d1);
 
 beforeEach(async () => {
-	await db.prepare('DELETE FROM message_queue').run();
+	await d1.prepare('DELETE FROM message_queue').run();
 });
 
 describe('D1CoalesceQueue', () => {
@@ -15,7 +17,7 @@ describe('D1CoalesceQueue', () => {
 		const ok = await q.enqueue(envelope(textMessage('hello', 'wamid_1')));
 		expect(ok).toBe(true);
 
-		const r = await db.prepare('SELECT message_id, whatsapp, status FROM message_queue').first<{
+		const r = await d1.prepare('SELECT message_id, whatsapp, status FROM message_queue').first<{
 			message_id: string;
 			whatsapp: string;
 			status: string;
@@ -30,7 +32,7 @@ describe('D1CoalesceQueue', () => {
 		expect(await q.enqueue(env1)).toBe(true);
 		expect(await q.enqueue(env1)).toBe(false);
 
-		const r = await db.prepare('SELECT COUNT(*) as c FROM message_queue').first<{ c: number }>();
+		const r = await d1.prepare('SELECT COUNT(*) as c FROM message_queue').first<{ c: number }>();
 		expect(r?.c).toBe(1);
 	});
 
@@ -71,7 +73,7 @@ describe('D1CoalesceQueue', () => {
 		await q.enqueue(envelope(textMessage('done test', 'wd1')));
 		await q.processAll(async () => {});
 
-		const r = await db.prepare("SELECT status FROM message_queue WHERE message_id = 'wd1'").first<{ status: string }>();
+		const r = await d1.prepare("SELECT status FROM message_queue WHERE message_id = 'wd1'").first<{ status: string }>();
 		expect(r?.status).toBe('done');
 	});
 
@@ -88,7 +90,7 @@ describe('D1CoalesceQueue', () => {
 		await q.processAll(fail);
 		await q.processAll(fail);
 
-		const r = await db.prepare("SELECT status, attempts FROM message_queue WHERE message_id = 'wf1'").first<{ status: string; attempts: number }>();
+		const r = await d1.prepare("SELECT status, attempts FROM message_queue WHERE message_id = 'wf1'").first<{ status: string; attempts: number }>();
 		expect(r?.attempts).toBe(2);
 		expect(r?.status).toBe('failed');
 		expect(calls).toBe(2);
@@ -119,11 +121,11 @@ describe('D1CoalesceQueue', () => {
 	it('claimBatch returns rows sorted by created_at ascending', async () => {
 		const q = new D1CoalesceQueue({ db, debounceSeconds: 0 });
 		await q.enqueue(envelope(textMessage('first', 'o1', '8881')));
-		await db.prepare(`UPDATE message_queue SET created_at = datetime('now', '-3 seconds') WHERE message_id = 'o1'`).run();
+		await d1.prepare(`UPDATE message_queue SET created_at = datetime('now', '-3 seconds') WHERE message_id = 'o1'`).run();
 		await q.enqueue(envelope(textMessage('second', 'o2', '8881')));
-		await db.prepare(`UPDATE message_queue SET created_at = datetime('now', '-2 seconds') WHERE message_id = 'o2'`).run();
+		await d1.prepare(`UPDATE message_queue SET created_at = datetime('now', '-2 seconds') WHERE message_id = 'o2'`).run();
 		await q.enqueue(envelope(textMessage('third', 'o3', '8881')));
-		await db.prepare(`UPDATE message_queue SET created_at = datetime('now', '-1 seconds') WHERE message_id = 'o3'`).run();
+		await d1.prepare(`UPDATE message_queue SET created_at = datetime('now', '-1 seconds') WHERE message_id = 'o3'`).run();
 
 		const claimed = await q.claimBatch();
 		expect(claimed.map((r) => r.message_id)).toEqual(['o1', 'o2', 'o3']);
@@ -134,9 +136,9 @@ describe('D1CoalesceQueue', () => {
 		await q.enqueue(envelope(textMessage('old', 'wo1')));
 		await q.processAll(async () => {});
 		// completed_at = now() but cleanupAfterDays=0 means it's older than -0 days = immediately
-		await db.prepare("UPDATE message_queue SET completed_at = datetime('now', '-1 day') WHERE message_id = 'wo1'").run();
+		await d1.prepare("UPDATE message_queue SET completed_at = datetime('now', '-1 day') WHERE message_id = 'wo1'").run();
 		await q.cleanup();
-		const r = await db.prepare("SELECT 1 FROM message_queue WHERE message_id = 'wo1'").first();
+		const r = await d1.prepare("SELECT 1 FROM message_queue WHERE message_id = 'wo1'").first();
 		expect(r).toBeNull();
 	});
 });

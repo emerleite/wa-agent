@@ -109,9 +109,9 @@ export class Agent {
 		this.gate = gate;
 		this.onboarding = onboarding;
 
-		// Unconverted stores (sessions B + C) still take raw D1.
-		this.queue = new D1CoalesceQueue({ db, ...queue });
-		// Converted stores (session A) take the Drizzle client.
+		// Unconverted stores (session C) still take raw D1 via this.d1.
+		// Converted stores (sessions A + B) take the Drizzle client.
+		this.queue = new D1CoalesceQueue({ db: this.db, ...queue });
 		this.session = stores.session ?? new SessionStore({ db: this.db });
 		this.log = stores.log ?? new MessageLog({ db: this.db });
 		this.leads = stores.leads ?? new LeadStore({ db: this.db });

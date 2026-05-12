@@ -1,23 +1,25 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
 import { SequentialPlan } from '../../src/content/sequential_plan.js';
+import { createDb } from '../../src/db/client.js';
 
-const db = (env as { DB: D1Database }).DB;
+const d1 = (env as { DB: D1Database }).DB;
+const db = createDb(d1);
 
 beforeAll(async () => {
-	await db.prepare('DELETE FROM plans').run();
-	await db.prepare('DELETE FROM plan_days').run();
-	await db
+	await d1.prepare('DELETE FROM plans').run();
+	await d1.prepare('DELETE FROM plan_days').run();
+	await d1
 		.prepare("INSERT INTO plans (id, slug, title, description, duration_days) VALUES (1, '21-day', '21-day plan', 'demo', 21)")
 		.run();
 	for (let d = 1; d <= 21; d++) {
-		await db.prepare('INSERT INTO plan_days (plan_id, day, title, content) VALUES (?, ?, ?, ?)').bind(1, d, `Day ${d}`, `content ${d}`).run();
+		await d1.prepare('INSERT INTO plan_days (plan_id, day, title, content) VALUES (?, ?, ?, ?)').bind(1, d, `Day ${d}`, `content ${d}`).run();
 	}
 });
 
 beforeEach(async () => {
-	await db.prepare('DELETE FROM user_plans').run();
-	await db.prepare('DELETE FROM user_plan_progress').run();
+	await d1.prepare('DELETE FROM user_plans').run();
+	await d1.prepare('DELETE FROM user_plan_progress').run();
 });
 
 describe('SequentialPlan', () => {
@@ -32,8 +34,8 @@ describe('SequentialPlan', () => {
 	it('enroll creates an active enrollment at day 1', async () => {
 		await plans.enroll('5551', 1);
 		const e = await plans.getActiveEnrollment('5551');
-		expect(e?.current_day).toBe(1);
-		expect(e?.is_active).toBe(1);
+		expect(e?.currentDay).toBe(1);
+		expect(e?.isActive).toBe(1);
 	});
 
 	it('enrolling in a different plan deactivates the previous one', async () => {
@@ -41,7 +43,7 @@ describe('SequentialPlan', () => {
 		// "Enroll" again in same plan resets to day 1
 		await plans.enroll('5551', 1);
 		const e = await plans.getActiveEnrollment('5551');
-		expect(e?.current_day).toBe(1);
+		expect(e?.currentDay).toBe(1);
 	});
 
 	it('markDone advances to next day', async () => {
@@ -49,13 +51,13 @@ describe('SequentialPlan', () => {
 		const r = await plans.markDone('5551', 1, 1);
 		expect(r).toEqual({ completed: false, nextDay: 2 });
 		const e = await plans.getActiveEnrollment('5551');
-		expect(e?.current_day).toBe(2);
+		expect(e?.currentDay).toBe(2);
 	});
 
 	it('markDone on final day completes the plan', async () => {
 		await plans.enroll('5551', 1);
 		// Skip ahead to day 21
-		await db.prepare('UPDATE user_plans SET current_day = 21 WHERE whatsapp = ?').bind('5551').run();
+		await d1.prepare('UPDATE user_plans SET current_day = 21 WHERE whatsapp = ?').bind('5551').run();
 		const r = await plans.markDone('5551', 1, 21);
 		expect(r).toEqual({ completed: true, day: 21 });
 		const e = await plans.getActiveEnrollment('5551');
@@ -67,7 +69,7 @@ describe('SequentialPlan', () => {
 		const r = await plans.skipDay('5551', 1, 1);
 		expect(r).toEqual({ completed: false, nextDay: 2 });
 
-		const progress = await db
+		const progress = await d1
 			.prepare("SELECT * FROM user_plan_progress WHERE whatsapp = '5551'")
 			.first();
 		expect(progress).toBeNull();
@@ -77,20 +79,20 @@ describe('SequentialPlan', () => {
 		await plans.enroll('5551', 1);
 		await plans.markDelivered('5551', 1, 1);
 		// Backdate the progress row to 25h ago
-		await db.prepare(`UPDATE user_plan_progress SET completed_at = datetime('now', '-25 hours') WHERE whatsapp = '5551'`).run();
+		await d1.prepare(`UPDATE user_plan_progress SET completed_at = datetime('now', '-25 hours') WHERE whatsapp = '5551'`).run();
 
 		const advanced = await plans.autoAdvanceStale();
 		expect(advanced).toBe(1);
 		const e = await plans.getActiveEnrollment('5551');
-		expect(e?.current_day).toBe(2);
+		expect(e?.currentDay).toBe(2);
 	});
 
 	describe('cadence gate (last_delivered_at)', () => {
 		// Need opt-in + open window for usersForDelivery to consider a user.
 		async function eligible(whatsapp: string) {
-			await db.prepare(`INSERT OR IGNORE INTO leads (whatsapp, ad_data, opt_in) VALUES (?, '{}', 1)`).bind(whatsapp).run();
-			await db.prepare(`UPDATE leads SET opt_in = 1 WHERE whatsapp = ?`).bind(whatsapp).run();
-			await db
+			await d1.prepare(`INSERT OR IGNORE INTO leads (whatsapp, ad_data, opt_in) VALUES (?, '{}', 1)`).bind(whatsapp).run();
+			await d1.prepare(`UPDATE leads SET opt_in = 1 WHERE whatsapp = ?`).bind(whatsapp).run();
+			await d1
 				.prepare(
 					`INSERT INTO message_windows (whatsapp, window_type, end_time) VALUES (?, 'paid', datetime('now', '+1 day'))
 					 ON CONFLICT(whatsapp) DO UPDATE SET end_time = datetime('now', '+1 day')`
@@ -100,14 +102,14 @@ describe('SequentialPlan', () => {
 		}
 
 		beforeEach(async () => {
-			await db.prepare('DELETE FROM leads').run();
-			await db.prepare('DELETE FROM message_windows').run();
+			await d1.prepare('DELETE FROM leads').run();
+			await d1.prepare('DELETE FROM message_windows').run();
 		});
 
 		it('markDelivered writes last_delivered_at on user_plans', async () => {
 			await plans.enroll('5551', 1);
 			await plans.markDelivered('5551', 1, 1);
-			const row = await db
+			const row = await d1
 				.prepare(`SELECT last_delivered_at FROM user_plans WHERE whatsapp = '5551'`)
 				.first<{ last_delivered_at: string }>();
 			expect(row?.last_delivered_at).toBeTruthy();
@@ -125,7 +127,7 @@ describe('SequentialPlan', () => {
 			await eligible('5551');
 			await plans.enroll('5551', 1);
 			await plans.markDelivered('5551', 1, 1);
-			await db
+			await d1
 				.prepare(`UPDATE user_plans SET last_delivered_at = datetime('now', '-21 hours') WHERE whatsapp = '5551'`)
 				.run();
 			const due = await plans.usersForDelivery();
@@ -156,7 +158,7 @@ describe('SequentialPlan', () => {
 			await eligible('5554');
 			await plans.enroll('5554', 1);
 			await plans.markDelivered('5554', 1, 1);
-			await db
+			await d1
 				.prepare(`UPDATE user_plans SET last_delivered_at = datetime('now', '-2 hours') WHERE whatsapp = '5554'`)
 				.run();
 			expect((await plans.usersForDelivery({ minIntervalHours: 20 })).length).toBe(0);
