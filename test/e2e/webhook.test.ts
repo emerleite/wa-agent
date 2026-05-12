@@ -9,6 +9,8 @@ import { env, fetchMock, createExecutionContext, waitOnExecutionContext } from '
 import { Hono } from 'hono';
 import { Agent } from '../../src/agent.js';
 import { mountWebhook } from '../../src/hono.js';
+import { Blocklist } from '../../src/security/blocklist.js';
+import { createDb } from '../../src/db/client.js';
 import { envelope, textMessage } from '../fixtures/webhooks.js';
 
 const db = (env as { DB: D1Database }).DB;
@@ -30,6 +32,7 @@ beforeEach(async () => {
 	await db.prepare('DELETE FROM sessions').run();
 	await db.prepare('DELETE FROM leads').run();
 	await db.prepare('DELETE FROM message_windows').run();
+	await db.prepare('DELETE FROM blocked_numbers').run();
 });
 
 function buildAgent() {
@@ -195,6 +198,45 @@ describe('POST /wa/webhook', () => {
 		);
 		await waitOnExecutionContext(ctx);
 		expect(res.status).toBe(403);
+	});
+
+	it('blocklist drops inbound from blocked numbers without invoking handlers', async () => {
+		const blocklist = new Blocklist({ db: createDb(db) });
+		await blocklist.block({ whatsapp: '15551234567', reason: 'spam', blockedBy: 'test' });
+
+		const agent = new Agent({
+			whatsapp: { endpoint: META_ENDPOINT, token: 'fake-token', verifyToken: 'verify-me' },
+			db,
+			blocklist,
+			queue: { debounceSeconds: 0 } as never,
+		});
+		const handlerCalls: string[] = [];
+		agent.onText(async ({ text }) => {
+			handlerCalls.push(text);
+		});
+		const app = buildApp(agent);
+
+		const env_ = envelope(textMessage('this should be dropped', 'wamid.BLK', '15551234567'));
+		const ctx = createExecutionContext();
+		const res = await app.fetch(
+			new Request('http://localhost/wa/webhook', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(env_),
+			}),
+			env,
+			ctx
+		);
+		await waitOnExecutionContext(ctx);
+
+		// Webhook returns 200 (we always 200 Meta to prevent retry storms);
+		// handler MUST NOT have been invoked.
+		expect(res.status).toBe(200);
+		expect(handlerCalls).toEqual([]);
+		// Queue row is still claimed/completed — the drop happens inside handleBatch
+		// after claimBatch already pulled the row.
+		const queueRow = await db.prepare("SELECT status FROM message_queue WHERE message_id = 'wamid.BLK'").first<{ status: string }>();
+		expect(queueRow?.status).toBe('done');
 	});
 
 	it('returns 200 OK for status callbacks (no message)', async () => {

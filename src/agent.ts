@@ -18,6 +18,7 @@ import type { OnboardingFlow } from './flow/onboarding.js';
 import { makeEmit, type Emit, type EventsBindings } from './events/emit.js';
 import type { AgentPipeline } from './pipeline/pipeline.js';
 import type { PipelineContext } from './pipeline/types.js';
+import type { Blocklist } from './security/blocklist.js';
 import type { AIClient, ButtonsPayload, CtaUrlPayload, HandlerContext, ReplyHelper, SummarizerLike, InboundEnvelope, InboundMessage } from './types.js';
 
 export interface AgentOptions {
@@ -58,6 +59,13 @@ export interface AgentOptions {
 	pipeline?: AgentPipeline | null;
 	/** Optional tenantId stamped on every per-turn pipeline context. */
 	tenantId?: string;
+	/**
+	 * Abuse blocklist. When set, every inbound message is checked against it
+	 * before any handler runs. Blocked messages are silently dropped (no
+	 * lifecycle hooks fire); they ARE logged + emit an `error` event tagged
+	 * `source: 'blocklist'` for triage.
+	 */
+	blocklist?: Blocklist | null;
 }
 
 type Lifecycle = 'onFirstContact' | 'onMessage' | 'onError';
@@ -86,6 +94,7 @@ export class Agent {
 	readonly onboarding: OnboardingFlow | null;
 	readonly pipeline: AgentPipeline | null;
 	readonly tenantId: string | null;
+	readonly blocklist: Blocklist | null;
 	readonly _lifecycleHooks: Record<Lifecycle, Array<(payload: unknown) => void | Promise<void>>> = {
 		onFirstContact: [],
 		onMessage: [],
@@ -110,6 +119,7 @@ export class Agent {
 			events = undefined,
 			pipeline = null,
 			tenantId = null,
+			blocklist = null,
 		} = opts;
 
 		if (!whatsapp?.endpoint || !whatsapp?.token) {
@@ -130,6 +140,7 @@ export class Agent {
 		this.onboarding = onboarding;
 		this.pipeline = pipeline;
 		this.tenantId = tenantId;
+		this.blocklist = blocklist;
 
 		this.queue = new D1CoalesceQueue({ db: this.db, ...queue });
 		this.session = stores.session ?? new SessionStore({ db: this.db });
@@ -200,6 +211,17 @@ export class Agent {
 		if (inbound.kind !== 'message') return;
 		if (combinedText && inbound.type === 'text') {
 			(inbound as { text: string }).text = combinedText;
+		}
+
+		if (this.blocklist && (await this.blocklist.isBlocked(inbound.whatsapp))) {
+			console.warn(`[Agent] dropping inbound from blocked ${inbound.whatsapp} (wamid=${inbound.wamid})`);
+			await this.emit({
+				type: 'error',
+				whatsapp: inbound.whatsapp,
+				source: 'blocklist',
+				message: `dropped inbound wamid=${inbound.wamid}`,
+			});
+			return;
 		}
 
 		const ctx = await this.buildContext(inbound);

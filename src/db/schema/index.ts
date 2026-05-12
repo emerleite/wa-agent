@@ -12,3 +12,4 @@ export * from './slots.js';
 export * from './usage.js';
 export * from './preferences.js';
 export * from './channel_opt_outs.js';
+export * from './blocklist.js';

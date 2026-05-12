@@ -96,6 +96,11 @@ export { ChannelOptOuts } from './channel/channel_opt_outs.js';
 export type { ChannelOptOutsOptions } from './channel/channel_opt_outs.js';
 export type { ChannelOptOutRow } from './db/schema/channel_opt_outs.js';
 
+// Abuse blocklist (hot-path check at webhook boundary)
+export { Blocklist } from './security/blocklist.js';
+export type { BlocklistOptions, BlockArgs, ListBlockedOptions } from './security/blocklist.js';
+export type { BlockedNumberRow } from './db/schema/blocklist.js';
+
 // Agent pipeline (v0.2+) — intent → policy → LLM → audit
 export { AgentPipeline, LLMIntentClassifier, PolicyGate, LLMResponder, AuditEmitter, defaultPipeline, emptyDecision } from './pipeline/index.js';
 export type {

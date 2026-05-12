@@ -524,6 +524,27 @@ await broadcast.run({
 
 `start === end` means never quiet (helpful as a default-disabled config). The window can wrap midnight (`22:00 → 06:00`) and is timezone-aware via `Intl.DateTimeFormat` so DST is handled correctly. `start` is inclusive, `end` is exclusive — `06:00` means "messages allowed from 06:00 onward".
 
+### Blocklist
+
+Per-number abuse blocklist with a 5-minute per-isolate cache. Hot-path-friendly — every inbound message can be checked cheaply, and new blocks propagate across isolates within the TTL without external coordination. Pass it to the Agent and `handleBatch` drops blocked inbound messages before any handler runs:
+
+```js
+import { Blocklist } from 'wa-agent'
+
+const blocklist = new Blocklist({ db: agent.db })  // or createDb(env.DB) if before agent
+const agent = new Agent({ /* ... */, db: env.DB, blocklist })
+
+// Admin ops (wire to your /api/* bearer-auth)
+await blocklist.block({ whatsapp: '5551', reason: 'spam', blockedBy: 'admin@x', notes: 'bulk junk' })
+await blocklist.block({ whatsapp: '5552', reason: 'temp', expiresAt: '2026-06-01 00:00:00' })  // auto-expires
+await blocklist.unblock('5551')
+const list = await blocklist.listBlocked()                    // active only
+const all  = await blocklist.listBlocked({ activeOnly: false }) // include expired
+await blocklist.cleanup()                                     // optional sweep of expired rows
+```
+
+Cache stores positive AND negative decisions so the common case (everyone is not blocked) is also a hit. **Fail-open** on D1 errors — a blocklist outage can't take the whole bot down; false-negatives are recovered by the TTL once D1 recovers. Pass `cacheTtlMs: 0` to bypass caching entirely. Blocked messages emit an `error` event with `source: 'blocklist'` for triage.
+
 ### Stores you can reach into
 
 The Agent owns four stores backed by D1 — they're exposed as fields and on the `HandlerContext` so handlers can use them directly:
@@ -762,6 +783,7 @@ The framework was extracted from a production bot ([bibliafala](https://bibliafa
 | Stale-row recovery for the D1 queue | `D1CoalesceQueue.recoverStale()` (auto on every `processAll`) |
 | Daily cleanup of completed queue rows | `D1CoalesceQueue.cleanup()` |
 | Template-message fallback when out of window | `ReEngagement` template path + raw `WhatsAppClient.sendTemplate()` |
+| `security/blocklist.js` (per-isolate cache + D1, fail-open) | `Blocklist` (Agent option: blocked inbound dropped before any handler) |
 
 ### Deliberately NOT extracted — domain-specific
 
