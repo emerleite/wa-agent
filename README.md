@@ -627,9 +627,45 @@ agent = new Agent({
 })
 ```
 
-The framework auto-emits 9 event types (`message_inbound`, `opt_in`, `opt_out`, `gate_blocked`, `broadcast_sent`, `plan_day_delivered`, `agent_decision`, `agent_outcome`, `error`). Stores accept an `emit?: Emit` callback if you want to wire them outside the Agent. No-ops gracefully when `env.EVENTS` is absent.
+The framework auto-emits 9 event types. Lifecycle wiring:
 
-`agent.emit(...)` is the same bound callable — use it to fire custom events from handlers (they go through the same Zod schema). Define your own event types alongside `FrameworkEventSchema` and call `env.EVENTS.writeDataPoint(...)` directly if you need shapes outside the framework's set.
+| Event | Fires when | parentTraceId? |
+|---|---|---|
+| `message_inbound` | every inbound message (Agent.handleBatch) | no |
+| `opt_in` / `opt_out` | LeadStore.optIn / optOut | no |
+| `gate_blocked` | AccessGate.check denial | no |
+| `broadcast_sent` | Broadcast.run per delivered recipient | no |
+| `plan_day_delivered` | SequentialPlan.markDelivered | no |
+| `agent_decision` | pipeline AuditEmitter step (with traceId) | — |
+| `agent_outcome` | after `reply.ai()` pipeline + send (paired with above) | yes: matches `agent_decision.traceId` |
+| `error` | dispatch throw / blocklist drop | no |
+
+`agent_outcome` is `'ok'` when the pipeline replied (or chose silent/escalate cleanly), `'error'` when a pipeline step threw or the WhatsApp send failed. Use the `parentTraceId` to join decisions to outcomes in AE.
+
+Stores accept an `emit?: Emit` callback if you want to wire them outside the Agent. No-ops gracefully when `env.EVENTS` is absent.
+
+`agent.emit(...)` is the same bound callable — use it to fire framework events from handlers.
+
+#### Custom event schemas
+
+`makeEmit` is generic over the schema. Consumers with their own discriminated union reuse the validation + stamping + AE-write infrastructure:
+
+```js
+import { makeEmit } from 'wa-agent'
+import { MyEventSchema } from './events.js'  // your own z.discriminatedUnion('type', [...])
+
+const emit = makeEmit({
+  env,
+  tenantId: 'tenant_abc',
+  schema: MyEventSchema,                        // defaults to FrameworkEventSchema
+  extractDoubles: (ev) => /* numeric fields */ [],   // defaults to latencyMs/planId/day
+  idField: (ev) => ev.patientId ?? '',          // defaults to ev.whatsapp ?? '' — controls blobs[2]
+})
+
+await emit({ type: 'charge_paid', patientId: 'pat_42', amountCents: 15000, /* ... */ })
+```
+
+The custom schema must include the post-`stampBase` fields (`v: 1`, `ts`, `traceId`, `type`, optional `tenantId`) — that's the contract `StampedEvent` enforces. The framework's own events and your custom events can coexist in the same AE dataset; `blobs[0]` (event type) distinguishes them.
 
 ### Agent pipeline (intent → policy → LLM → audit)
 

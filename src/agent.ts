@@ -341,17 +341,33 @@ export class Agent {
 						tenantId: self.tenantId ?? undefined,
 						traceId: crypto.randomUUID(),
 					};
-					const decision = await self.pipeline.run(pipeCtx);
-					if (decision.action !== 'reply' || !decision.reply) {
-						// Policy/intent short-circuited (silent or escalate). Caller may
-						// still want a deterministic shape — return what we have.
-						return { answer: decision.reply?.answer ?? null, threadId: opts?.threadId ?? '' };
+					// `agent_outcome` pairs with the `agent_decision` emitted by the
+					// pipeline's AuditEmitter step via `parentTraceId = pipeCtx.traceId`.
+					// 'ok' covers: reply sent, policy chose silent/escalate cleanly.
+					// 'error' covers: a pipeline step threw (caught + flagged via
+					// `step_error:X` reason), OR the WhatsApp send threw afterwards.
+					let outcome: 'ok' | 'error' = 'ok';
+					try {
+						const decision = await self.pipeline.run(pipeCtx);
+						if (typeof decision.reason === 'string' && decision.reason.startsWith('step_error:')) {
+							outcome = 'error';
+						}
+						if (decision.action !== 'reply' || !decision.reply) {
+							// Policy/intent short-circuited (silent or escalate). Caller may
+							// still want a deterministic shape — return what we have.
+							return { answer: decision.reply?.answer ?? null, threadId: opts?.threadId ?? '' };
+						}
+						const { answer, threadId: newTid } = decision.reply;
+						await self.session.set(whatsapp, { threadId: newTid });
+						await self.log.updateAnswer(inboundWamid, { body: text, response: answer, summary: answer });
+						if (answer) await c.sendText(whatsapp, answer);
+						return { answer, threadId: newTid };
+					} catch (err) {
+						outcome = 'error';
+						throw err;
+					} finally {
+						await self.emit({ type: 'agent_outcome', parentTraceId: pipeCtx.traceId, outcome });
 					}
-					const { answer, threadId: newTid } = decision.reply;
-					await self.session.set(whatsapp, { threadId: newTid });
-					await self.log.updateAnswer(inboundWamid, { body: text, response: answer, summary: answer });
-					if (answer) await c.sendText(whatsapp, answer);
-					return { answer, threadId: newTid };
 				}
 				if (!self.ai) throw new Error('Agent: no AI configured');
 				const { answer, threadId: newTid } = await self.ai.chat({ threadId: opts?.threadId ?? null, text });

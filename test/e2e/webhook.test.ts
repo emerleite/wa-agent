@@ -11,6 +11,8 @@ import { Agent } from '../../src/agent.js';
 import { mountWebhook } from '../../src/hono.js';
 import { Blocklist } from '../../src/security/blocklist.js';
 import { createDb } from '../../src/db/client.js';
+import { AgentPipeline, LLMResponder, AuditEmitter, type PipelineStep } from '../../src/pipeline/index.js';
+import type { AIClient } from '../../src/types.js';
 import { envelope, textMessage } from '../fixtures/webhooks.js';
 
 const db = (env as { DB: D1Database }).DB;
@@ -261,5 +263,99 @@ describe('POST /wa/webhook', () => {
 		// No queue row created
 		const r = await db.prepare(`SELECT COUNT(*) as c FROM message_queue`).first<{ c: number }>();
 		expect(r?.c).toBe(0);
+	});
+
+	describe('agent_outcome auto-emit (pipeline + events)', () => {
+		function captureEvents() {
+			type Captured = { type: string; parentTraceId?: string; outcome?: string; traceId?: string };
+			const events: Captured[] = [];
+			const EVENTS = {
+				writeDataPoint(dp: { blobs: (string | ArrayBuffer | null)[] }) {
+					const json = dp.blobs[4] as string;
+					const ev = JSON.parse(json) as { type: string; parentTraceId?: string; outcome?: string; traceId?: string };
+					events.push({ type: ev.type, parentTraceId: ev.parentTraceId, outcome: ev.outcome, traceId: ev.traceId });
+				},
+			} as unknown as AnalyticsEngineDataset;
+			return { events, EVENTS };
+		}
+
+		function buildPipelinedAgent(opts: { ai: AIClient; cap: ReturnType<typeof captureEvents>; extraStep?: PipelineStep }) {
+			const agent = new Agent({
+				whatsapp: { endpoint: META_ENDPOINT, token: 'fake-token', verifyToken: 'verify-me' },
+				db,
+				ai: opts.ai,
+				events: { env: { EVENTS: opts.cap.EVENTS } },
+				queue: { debounceSeconds: 0 } as never,
+			});
+			// Wire pipeline that emits agent_decision via the same agent.emit so
+			// agent_decision + agent_outcome share the AE binding.
+			const steps: PipelineStep[] = [];
+			if (opts.extraStep) steps.push(opts.extraStep);
+			steps.push(new LLMResponder({ ai: opts.ai, modelName: 'fake' }));
+			steps.push(new AuditEmitter({ emit: agent.emit }));
+			(agent as { pipeline: AgentPipeline | null }).pipeline = new AgentPipeline(steps);
+			agent.onText(async ({ text, reply }) => {
+				await reply.ai(text);
+			});
+			return agent;
+		}
+
+		it("emits agent_outcome ok after a clean pipeline reply, with parentTraceId matching agent_decision", async () => {
+			const cap = captureEvents();
+			const ai: AIClient = { chat: async () => ({ answer: 'hello back', threadId: 'tid_1' }) };
+			const agent = buildPipelinedAgent({ ai, cap });
+			const app = buildApp(agent);
+
+			fetchMock.get(META_HOST).intercept({ path: TEXT_MSG_PATH, method: 'POST' }).reply(200, async () => ({ messages: [{ id: 'wamid.OUT' }] })).times(1);
+
+			const env_ = envelope(textMessage('hi', 'wamid.OUT1', '15551234567'));
+			const ctx = createExecutionContext();
+			await app.fetch(
+				new Request('http://localhost/wa/webhook', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(env_),
+				}),
+				env,
+				ctx
+			);
+			await waitOnExecutionContext(ctx);
+
+			const decision = cap.events.find((e) => e.type === 'agent_decision');
+			const outcome = cap.events.find((e) => e.type === 'agent_outcome');
+			expect(decision).toBeTruthy();
+			expect(outcome).toBeTruthy();
+			expect(outcome?.outcome).toBe('ok');
+			expect(outcome?.parentTraceId).toBe(decision?.traceId);
+		});
+
+		it('emits agent_outcome error when a pipeline step throws (step_error reason)', async () => {
+			const cap = captureEvents();
+			const ai: AIClient = { chat: async () => ({ answer: 'never sent', threadId: 'x' }) };
+			const throwingStep: PipelineStep = {
+				name: 'broken',
+				async run() {
+					throw new Error('step exploded');
+				},
+			};
+			const agent = buildPipelinedAgent({ ai, cap, extraStep: throwingStep });
+			const app = buildApp(agent);
+
+			const env_ = envelope(textMessage('hi', 'wamid.OUT2', '15551234568'));
+			const ctx = createExecutionContext();
+			await app.fetch(
+				new Request('http://localhost/wa/webhook', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(env_),
+				}),
+				env,
+				ctx
+			);
+			await waitOnExecutionContext(ctx);
+
+			const outcome = cap.events.find((e) => e.type === 'agent_outcome');
+			expect(outcome?.outcome).toBe('error');
+		});
 	});
 });
