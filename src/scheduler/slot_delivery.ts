@@ -1,10 +1,16 @@
 /**
  * Slot-based delivery with weighted pick + per-slot dedupe.
+ *
+ * From v0.2 onward: backed by Drizzle ORM.
  */
+import { and, eq, gte, lte, isNull, notExists, or, sql } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { ads, adImpressions } from '../db/schema/slots.js';
+import { messageWindows } from '../db/schema/message_windows.js';
+import { leads } from '../db/schema/leads.js';
+
 export interface SlotDeliveryOptions {
-	db: D1Database;
-	itemTable?: string;
-	impressionTable?: string;
+	db: DB;
 }
 
 export interface SlotItem {
@@ -19,71 +25,83 @@ export interface SlotItem {
 }
 
 export class SlotDelivery {
-	readonly db: D1Database;
-	readonly itemTable: string;
-	readonly impressionTable: string;
+	readonly db: DB;
 
-	constructor({ db, itemTable = 'ads', impressionTable = 'ad_impressions' }: SlotDeliveryOptions) {
+	constructor({ db }: SlotDeliveryOptions) {
 		if (!db) throw new Error('SlotDelivery: db required');
 		this.db = db;
-		this.itemTable = itemTable;
-		this.impressionTable = impressionTable;
 	}
 
 	async getActiveItems(): Promise<SlotItem[]> {
-		const r = await this.db
-			.prepare(
-				`SELECT id, slug, title, body, cta_text, cta_url, video_url, weight
-				 FROM ${this.itemTable}
-				 WHERE is_active = 1
-				   AND (starts_at IS NULL OR starts_at <= datetime('now'))
-				   AND (ends_at   IS NULL OR ends_at   >= datetime('now'))`
-			)
-			.all<SlotItem>();
-		return r.results ?? [];
+		const rows = await this.db
+			.select({
+				id: ads.id,
+				slug: ads.slug,
+				title: ads.title,
+				body: ads.body,
+				cta_text: ads.ctaText,
+				cta_url: ads.ctaUrl,
+				video_url: ads.videoUrl,
+				weight: ads.weight,
+			})
+			.from(ads)
+			.where(
+				and(
+					eq(ads.isActive, 1),
+					or(isNull(ads.startsAt), lte(ads.startsAt, sql`datetime('now')`)),
+					or(isNull(ads.endsAt), gte(ads.endsAt, sql`datetime('now')`))
+				)
+			);
+		return rows;
 	}
 
-	async pickForUser(whatsapp: string, { recentHours = 24, rng = Math.random }: { recentHours?: number; rng?: () => number } = {}): Promise<SlotItem | null> {
+	async pickForUser(
+		whatsapp: string,
+		{ recentHours = 24, rng = Math.random }: { recentHours?: number; rng?: () => number } = {}
+	): Promise<SlotItem | null> {
 		const items = await this.getActiveItems();
 		if (!items.length) return null;
+
+		const cutoff = sql.raw(`(datetime('now', '-${recentHours} hours'))`);
 		const recent = await this.db
-			.prepare(
-				`SELECT DISTINCT item_id FROM ${this.impressionTable}
-				 WHERE whatsapp = ? AND sent_at >= datetime('now', '-' || ? || ' hours')`
-			)
-			.bind(whatsapp, recentHours)
-			.all<{ item_id: number }>();
-		const seenIds = new Set((recent.results ?? []).map((r) => r.item_id));
+			.selectDistinct({ itemId: adImpressions.itemId })
+			.from(adImpressions)
+			.where(and(eq(adImpressions.whatsapp, whatsapp), gte(adImpressions.sentAt, cutoff)));
+
+		const seenIds = new Set(recent.map((r) => r.itemId));
 		const fresh = items.filter((i) => !seenIds.has(i.id));
 		const pool = fresh.length ? fresh : items;
 		return weightedPick(pool, rng);
 	}
 
 	async recordImpression(whatsapp: string, itemId: number, slot: string): Promise<void> {
-		await this.db
-			.prepare(`INSERT INTO ${this.impressionTable} (whatsapp, item_id, slot) VALUES (?, ?, ?)`)
-			.bind(whatsapp, itemId, slot)
-			.run();
+		await this.db.insert(adImpressions).values({ whatsapp, itemId, slot });
 	}
 
 	async usersForSlot(slot: string, { limit = 1000 }: { limit?: number } = {}): Promise<{ whatsapp: string }[]> {
-		const r = await this.db
-			.prepare(
-				`SELECT DISTINCT mw.whatsapp
-				 FROM message_windows mw
-				 JOIN leads l ON l.whatsapp = mw.whatsapp AND l.opt_in = 1
-				 WHERE mw.end_time > datetime('now')
-				   AND NOT EXISTS (
-					 SELECT 1 FROM ${this.impressionTable} ai
-					 WHERE ai.whatsapp = mw.whatsapp
-					   AND ai.slot = ?
-					   AND date(ai.sent_at) = date('now')
-				   )
-				 LIMIT ?`
+		const rows = await this.db
+			.selectDistinct({ whatsapp: messageWindows.whatsapp })
+			.from(messageWindows)
+			.innerJoin(leads, and(eq(leads.whatsapp, messageWindows.whatsapp), eq(leads.optIn, 1)))
+			.where(
+				and(
+					sql`${messageWindows.endTime} > datetime('now')`,
+					notExists(
+						this.db
+							.select({ one: sql`1` })
+							.from(adImpressions)
+							.where(
+								and(
+									eq(adImpressions.whatsapp, messageWindows.whatsapp),
+									eq(adImpressions.slot, slot),
+									eq(sql`date(${adImpressions.sentAt})`, sql`date('now')`)
+								)
+							)
+					)
+				)
 			)
-			.bind(slot, limit)
-			.all<{ whatsapp: string }>();
-		return r.results ?? [];
+			.limit(limit);
+		return rows;
 	}
 }
 

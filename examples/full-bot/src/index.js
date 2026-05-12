@@ -91,8 +91,8 @@ function init(env) {
 	});
 
 	const transcriber = new Transcriber({ client: azure });
-	const usage = new UsageCounter({ db: env.DB });
-	const prefs = new PreferenceStore({ db: env.DB });
+	const usage = new UsageCounter({ db: agent.db });
+	const prefs = new PreferenceStore({ db: agent.db });
 
 	// AI is premium-only; cap-free users hit the gate and see the Upsell.
 	const gate = new AccessGate({ tierProvider, allowedTiers: ['premium', 'lifetime'], freeMessageLimit: 0 });
@@ -128,7 +128,7 @@ function init(env) {
 		const plans = new SequentialPlan({ db: agent.db });
 		const enrolled = await plans.getActiveEnrollment(user.whatsapp);
 		if (enrolled) {
-			await reply.text(`You're on day ${enrolled.current_day} of "${enrolled.title}".`);
+			await reply.text(`You're on day ${enrolled.currentDay} of "${enrolled.title}".`);
 			return;
 		}
 		const list = await plans.listActivePlans();
@@ -136,7 +136,7 @@ function init(env) {
 			await reply.text('No plans available.');
 			return;
 		}
-		await reply.text(list.map((p, i) => `${i + 1}. ${p.title} — ${p.duration_days} days`).join('\n'));
+		await reply.text(list.map((p, i) => `${i + 1}. ${p.title} — ${p.durationDays} days`).join('\n'));
 		await reply.buttons({
 			body: 'Pick a plan to start:',
 			buttons: list.slice(0, 3).map((p) => ({ id: `plan_enroll_${p.id}`, title: p.title.slice(0, 17) })),
@@ -144,7 +144,7 @@ function init(env) {
 	});
 
 	// ---- Search before AI: hybrid lookup against a `docs` table ----
-	const search = new HybridSearch({ db: env.DB, contentTable: 'docs', searchColumns: ['title', 'body'] });
+	const search = new HybridSearch({ db: agent.db, contentTable: 'docs', searchColumns: ['title', 'body'] });
 
 	// ---- Default text handler: search → tier-gate → AI ----
 	agent.onText(async ({ text, inbound, user, reply }) => {
@@ -184,7 +184,7 @@ function init(env) {
 
 		await reply.markRead();
 		const session = await agent.session.get(user.whatsapp);
-		await reply.ai(prompt, { threadId: session?.thread_id });
+		await reply.ai(prompt, { threadId: session?.threadId });
 	});
 
 	// ---- Buttons ----
@@ -250,7 +250,7 @@ function init(env) {
 			today.audio_url = url;
 		}
 
-		const broadcast = new Broadcast({ client: agent.client, db: env.DB, channel: 'devotional' });
+		const broadcast = new Broadcast({ client: agent.client, db: agent.db, channel: 'devotional' });
 		await broadcast.run({
 			send: async ({ whatsapp }) => {
 				const mode = await deliveryMode.get(prefs, whatsapp);
@@ -266,34 +266,34 @@ function init(env) {
 		});
 	});
 
-	agent.cron('0 12 * * *', async ({ env }) => {
-		const broadcast = new Broadcast({ client: agent.client, db: env.DB, channel: 'engagement_reading' });
+	agent.cron('0 12 * * *', async () => {
+		const broadcast = new Broadcast({ client: agent.client, db: agent.db, channel: 'engagement_reading' });
 		await broadcast.run({ send: ({ whatsapp }) => reading.ask(whatsapp) });
 	});
 
-	agent.cron('0 6 * * *', async ({ env }) => {
+	agent.cron('0 6 * * *', async () => {
 		// Sequential plan delivery
-		const plans = new SequentialPlan({ db: env.DB });
+		const plans = new SequentialPlan({ db: agent.db });
 		await plans.autoAdvanceStale();
 		const users = await plans.usersForDelivery();
 		for (const u of users) {
-			const day = await plans.getDay(u.plan_id, u.current_day);
+			const day = await plans.getDay(u.planId, u.currentDay);
 			if (!day) continue;
-			await agent.client.sendText(u.whatsapp, `📖 Day ${u.current_day}/${u.duration_days} — ${day.title}\n\n${day.content}`);
+			await agent.client.sendText(u.whatsapp, `📖 Day ${u.currentDay}/${u.durationDays} — ${day.title}\n\n${day.content}`);
 			await agent.client.sendButtons(u.whatsapp, {
 				body: 'When you finish, let me know:',
 				buttons: [
-					{ id: `plan_done_${u.plan_id}_${u.current_day}`, title: '✅ Done' },
-					{ id: `plan_skip_${u.plan_id}_${u.current_day}`, title: '⏭ Skip' },
+					{ id: `plan_done_${u.planId}_${u.currentDay}`, title: '✅ Done' },
+					{ id: `plan_skip_${u.planId}_${u.currentDay}`, title: '⏭ Skip' },
 				],
 			});
-			await plans.markDelivered(u.whatsapp, u.plan_id, u.current_day);
+			await plans.markDelivered(u.whatsapp, u.planId, u.currentDay);
 		}
 	});
 
-	agent.cron('0 14 * * *', async ({ env }) => {
+	agent.cron('0 14 * * *', async () => {
 		// Slot-based delivery (afternoon tip/ad)
-		const slot = new SlotDelivery({ db: env.DB });
+		const slot = new SlotDelivery({ db: agent.db });
 		const users = await slot.usersForSlot('afternoon');
 		for (const u of users) {
 			const item = await slot.pickForUser(u.whatsapp);

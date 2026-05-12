@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
 import { PreferenceStore, definePreference } from '../../src/preference/preference_store.js';
+import { createDb } from '../../src/db/client.js';
 
-const db = (env as { DB: D1Database }).DB;
+const d1 = (env as { DB: D1Database }).DB;
+const db = createDb(d1);
 
 beforeEach(async () => {
-	await db.prepare('DELETE FROM user_preferences').run();
+	await d1.prepare('DELETE FROM user_preferences').run();
 });
 
 describe('PreferenceStore', () => {
@@ -59,9 +61,11 @@ describe('PreferenceStore', () => {
 
 	it('updated_at advances on each set', async () => {
 		await prefs.set('5551', 'delivery_mode', 'audio');
-		await db.prepare(`UPDATE user_preferences SET updated_at = datetime('now', '-10 minutes') WHERE whatsapp = '5551'`).run();
+		await d1.prepare(`UPDATE user_preferences SET updated_at = datetime('now', '-10 minutes') WHERE whatsapp = '5551'`).run();
 		await prefs.set('5551', 'delivery_mode', 'text');
-		const row = await db.prepare(`SELECT julianday('now') - julianday(updated_at) AS age FROM user_preferences WHERE whatsapp = '5551'`).first<{ age: number }>();
+		const row = await d1
+			.prepare(`SELECT julianday('now') - julianday(updated_at) AS age FROM user_preferences WHERE whatsapp = '5551'`)
+			.first<{ age: number }>();
 		expect((row?.age ?? 1) * 24 * 60).toBeLessThan(1); // < 1 minute old
 	});
 });

@@ -1,9 +1,20 @@
 /**
  * Modular dashboard for wa-agent — HTMX shell + registered cards.
+ *
+ * From v0.2 onward: cards read from D1 via Drizzle.
  */
+import { and, count, countDistinct, eq, gte, isNull, sql, sum } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { leads } from '../db/schema/leads.js';
+import { messages } from '../db/schema/messages.js';
+import { messageWindows } from '../db/schema/message_windows.js';
+import { messageQueue } from '../db/schema/message_queue.js';
+import { engagementAnswers, broadcastLog } from '../db/schema/broadcast.js';
+import { plans, userPlans } from '../db/schema/plans.js';
+import { featureUsage } from '../db/schema/usage.js';
 
 export interface CardContext {
-	db: D1Database;
+	db: DB;
 	env: Record<string, unknown>;
 	query: Record<string, string | undefined>;
 }
@@ -58,10 +69,11 @@ export class Dashboard {
 
 		app.get(base, (c) => c.html(this.renderShell(base)));
 
+		const { createDb } = await import('../db/client.js');
 		for (const card of this.cards) {
 			app.get(`${base}/c/${card.id}`, async (c) => {
 				try {
-					const html = await card.render({ db: c.env.DB, env: c.env, query: c.req.query() });
+					const html = await card.render({ db: createDb(c.env.DB), env: c.env, query: c.req.query() });
 					return c.html(html);
 				} catch (e) {
 					return c.html(`<div class="card-error">${escapeHtml(e instanceof Error ? e.message : String(e))}</div>`);
@@ -105,19 +117,29 @@ export function summaryCard({ id = 'summary', title = 'Overview', refreshSeconds
 		id,
 		refreshSeconds,
 		async render({ db }) {
-			const results = await db.batch<Record<string, number>>([
-				db.prepare(`SELECT COUNT(*) as total, SUM(opt_in) as opt_in FROM leads`),
-				db.prepare(`SELECT COUNT(*) as total, COUNT(CASE WHEN created_at >= datetime('now', '-1 day') THEN 1 END) as last_24h FROM messages`),
-				db.prepare(`SELECT COUNT(*) as total, COUNT(CASE WHEN end_time > datetime('now') THEN 1 END) as active FROM message_windows`),
+			const [leadStats, msgStats, winStats] = await Promise.all([
+				db.select({ total: count(), optIn: sum(leads.optIn) }).from(leads),
+				db
+					.select({
+						total: count(),
+						last24h: sum(sql<number>`CASE WHEN ${messages.createdAt} >= datetime('now', '-1 day') THEN 1 ELSE 0 END`),
+					})
+					.from(messages),
+				db
+					.select({
+						total: count(),
+						active: sum(sql<number>`CASE WHEN ${messageWindows.endTime} > datetime('now') THEN 1 ELSE 0 END`),
+					})
+					.from(messageWindows),
 			]);
-			const l = results[0]?.results?.[0] ?? {};
-			const m = results[1]?.results?.[0] ?? {};
-			const w = results[2]?.results?.[0] ?? {};
+			const l = leadStats[0] ?? { total: 0, optIn: 0 };
+			const m = msgStats[0] ?? { total: 0, last24h: 0 };
+			const w = winStats[0] ?? { total: 0, active: 0 };
 			return kpiCard(title, [
 				['Leads', l.total ?? 0],
-				['Opt-in', l.opt_in ?? 0],
-				['Msgs (24h)', m.last_24h ?? 0],
-				['Active windows', w.active ?? 0],
+				['Opt-in', Number(l.optIn ?? 0)],
+				['Msgs (24h)', Number(m.last24h ?? 0)],
+				['Active windows', Number(w.active ?? 0)],
 			]);
 		},
 	};
@@ -128,11 +150,11 @@ export function queueCard({ id = 'queue', title = 'Queue', refreshSeconds = 30 }
 		id,
 		refreshSeconds,
 		async render({ db }) {
-			const r = await db.prepare(`SELECT status, COUNT(*) as count FROM message_queue GROUP BY status`).all<{ status: string; count: number }>();
-			const rows = (r.results ?? [])
+			const rows = await db.select({ status: messageQueue.status, count: count() }).from(messageQueue).groupBy(messageQueue.status);
+			const body = rows
 				.map((x) => `<tr><td>${escapeHtml(x.status)}</td><td style="text-align:right">${x.count}</td></tr>`)
 				.join('');
-			return `<h2>${escapeHtml(title)}</h2><table><thead><tr><th>Status</th><th style="text-align:right">Count</th></tr></thead><tbody>${rows || '<tr><td colspan=2 class="loading">empty</td></tr>'}</tbody></table>`;
+			return `<h2>${escapeHtml(title)}</h2><table><thead><tr><th>Status</th><th style="text-align:right">Count</th></tr></thead><tbody>${body || '<tr><td colspan=2 class="loading">empty</td></tr>'}</tbody></table>`;
 		},
 	};
 }
@@ -142,13 +164,12 @@ export function funnelCard({ id = 'funnel', title = 'Funnel', refreshSeconds = 6
 		id,
 		refreshSeconds,
 		async render({ db }) {
-			const r = await db.prepare(`SELECT funnel_state, COUNT(*) as count FROM leads GROUP BY funnel_state`).all<{ funnel_state: string; count: number }>();
-			const rows = r.results ?? [];
+			const rows = await db.select({ funnelState: leads.funnelState, count: count() }).from(leads).groupBy(leads.funnelState);
 			const max = Math.max(...rows.map((x) => x.count), 1);
 			const bars = rows
 				.map(
 					(x) =>
-						`<div class="bar-row"><span class="bar-label">${escapeHtml(x.funnel_state)}</span><div class="bar-fill" style="width:${(x.count / max) * 100}%"></div><span class="bar-value">${x.count}</span></div>`
+						`<div class="bar-row"><span class="bar-label">${escapeHtml(x.funnelState)}</span><div class="bar-fill" style="width:${(x.count / max) * 100}%"></div><span class="bar-value">${x.count}</span></div>`
 				)
 				.join('');
 			return `<h2>${escapeHtml(title)}</h2>${bars || '<div class="loading">empty</div>'}`;
@@ -161,14 +182,14 @@ export function messagesChartCard({ id = 'messages', title = 'Messages (7d)', re
 		id,
 		refreshSeconds,
 		async render({ db }) {
-			const r = await db
-				.prepare(
-					`SELECT date(created_at) as day, COUNT(*) as total
-					 FROM messages WHERE created_at >= date('now', '-${days} days')
-					 GROUP BY date(created_at) ORDER BY day`
-				)
-				.all<{ day: string; total: number }>();
-			const rows = r.results ?? [];
+			const cutoff = sql.raw(`(date('now', '-${days} days'))`);
+			const day = sql<string>`date(${messages.createdAt})`;
+			const rows = await db
+				.select({ day, total: count() })
+				.from(messages)
+				.where(gte(messages.createdAt, cutoff))
+				.groupBy(day)
+				.orderBy(day);
 			const labels = rows.map((x) => x.day.slice(5));
 			const values = rows.map((x) => x.total);
 			const cid = `c_${id}_${Date.now()}`;
@@ -191,25 +212,28 @@ export function dauCard({ id = 'dau', title = 'Daily active users', refreshSecon
 		id,
 		refreshSeconds,
 		async render({ db }) {
-			const results = await db.batch<{ day: string; users?: number; new_leads?: number }>([
-				db.prepare(
-					`SELECT date(created_at) as day, COUNT(DISTINCT whatsapp) as users
-					 FROM messages WHERE created_at >= date('now', '-${days} days')
-					 GROUP BY date(created_at) ORDER BY day`
-				),
-				db.prepare(
-					`SELECT date(created_at) as day, COUNT(*) as new_leads
-					 FROM leads WHERE created_at >= date('now', '-${days} days')
-					 GROUP BY date(created_at) ORDER BY day`
-				),
+			const cutoff = sql.raw(`(date('now', '-${days} days'))`);
+			const msgDay = sql<string>`date(${messages.createdAt})`;
+			const leadDay = sql<string>`date(${leads.createdAt})`;
+			const [dau, newUsers] = await Promise.all([
+				db
+					.select({ day: msgDay, users: countDistinct(messages.whatsapp) })
+					.from(messages)
+					.where(gte(messages.createdAt, cutoff))
+					.groupBy(msgDay)
+					.orderBy(msgDay),
+				db
+					.select({ day: leadDay, newLeads: count() })
+					.from(leads)
+					.where(gte(leads.createdAt, cutoff))
+					.groupBy(leadDay)
+					.orderBy(leadDay),
 			]);
-			const dau = results[0]?.results ?? [];
-			const newUsers = results[1]?.results ?? [];
 			const labels = dau.map((x) => x.day.slice(5));
 			const dauValues = dau.map((x) => x.users ?? 0);
 			const newValues = labels.map((label) => {
 				const match = newUsers.find((d) => d.day.slice(5) === label);
-				return match?.new_leads ?? 0;
+				return match?.newLeads ?? 0;
 			});
 			const cid = `c_${id}_${Date.now()}`;
 			return `<h2>${escapeHtml(title)}</h2><canvas id="${cid}"></canvas>
@@ -244,23 +268,25 @@ export function engagementCard({
 		id,
 		refreshSeconds,
 		async render({ db }) {
-			const results = await db.batch<Record<string, number | string>>([
-				db.prepare(
-					`SELECT answer, COUNT(*) as count FROM engagement_answers
-					 WHERE engagement_id = ? AND date >= date('now', '-${days} days') GROUP BY answer`
-				).bind(topicId),
-				db.prepare(
-					`SELECT COUNT(*) as sent FROM broadcast_log WHERE channel = ? AND date >= date('now', '-${days} days')`
-				).bind(channel),
+			const cutoff = sql.raw(`(date('now', '-${days} days'))`);
+			const [answers, sentRows] = await Promise.all([
+				db
+					.select({ answer: engagementAnswers.answer, count: count() })
+					.from(engagementAnswers)
+					.where(and(eq(engagementAnswers.engagementId, topicId), gte(engagementAnswers.date, cutoff)))
+					.groupBy(engagementAnswers.answer),
+				db
+					.select({ sent: count() })
+					.from(broadcastLog)
+					.where(and(eq(broadcastLog.channel, channel), gte(broadcastLog.date, cutoff))),
 			]);
-			const answers = results[0]?.results ?? [];
 			let yes = 0;
 			let no = 0;
 			for (const row of answers) {
-				if (row.answer === 'a') yes = (row.count as number) ?? 0;
-				else if (row.answer === 'b') no = (row.count as number) ?? 0;
+				if (row.answer === 'a') yes = row.count;
+				else if (row.answer === 'b') no = row.count;
 			}
-			const sent = (results[1]?.results?.[0]?.sent as number) ?? 0;
+			const sent = sentRows[0]?.sent ?? 0;
 			const ignored = Math.max(0, sent - yes - no);
 			const responseRate = sent > 0 ? Math.round(((yes + no) / sent) * 100) : 0;
 			const max = Math.max(yes, no, ignored, 1);
@@ -307,35 +333,33 @@ export function gateConversionCard({
 		id,
 		refreshSeconds,
 		async render({ db }) {
-			const results = await db.batch<Record<string, number | string>>([
-				db.prepare(`SELECT COUNT(DISTINCT whatsapp) as users_blocked, COUNT(*) as total_hits FROM feature_usage WHERE feature = ?`).bind(feature),
+			const cutoff = sql.raw(`(date('now', '-${days} days'))`);
+			const day = sql<string>`date(${featureUsage.usedAt})`;
+			const [summaryRows, convRows, seriesRows] = await Promise.all([
 				db
-					.prepare(
-						`SELECT COUNT(DISTINCT u.whatsapp) as converted
-						 FROM feature_usage u
-						 JOIN leads l ON l.whatsapp = u.whatsapp
-						 WHERE u.feature = ? AND l.funnel_state = ?`
-					)
-					.bind(feature, convertedFunnelState),
+					.select({ usersBlocked: countDistinct(featureUsage.whatsapp), totalHits: count() })
+					.from(featureUsage)
+					.where(eq(featureUsage.feature, feature)),
 				db
-					.prepare(
-						`SELECT date(used_at) as day, COUNT(DISTINCT whatsapp) as users
-						 FROM feature_usage WHERE feature = ? AND used_at >= date('now', '-${days} days')
-						 GROUP BY date(used_at) ORDER BY day`
-					)
-					.bind(feature),
+					.select({ converted: countDistinct(featureUsage.whatsapp) })
+					.from(featureUsage)
+					.innerJoin(leads, eq(leads.whatsapp, featureUsage.whatsapp))
+					.where(and(eq(featureUsage.feature, feature), eq(leads.funnelState, convertedFunnelState))),
+				db
+					.select({ day, users: countDistinct(featureUsage.whatsapp) })
+					.from(featureUsage)
+					.where(and(eq(featureUsage.feature, feature), gte(featureUsage.usedAt, cutoff)))
+					.groupBy(day)
+					.orderBy(day),
 			]);
-			const summary = results[0]?.results?.[0] ?? {};
-			const conv = results[1]?.results?.[0] ?? {};
-			const series = results[2]?.results ?? [];
 
-			const blocked = (summary.users_blocked as number) ?? 0;
-			const hits = (summary.total_hits as number) ?? 0;
-			const converted = (conv.converted as number) ?? 0;
+			const blocked = summaryRows[0]?.usersBlocked ?? 0;
+			const hits = summaryRows[0]?.totalHits ?? 0;
+			const converted = convRows[0]?.converted ?? 0;
 			const rate = blocked > 0 ? Math.round((converted / blocked) * 100) : 0;
 
-			const labels = series.map((x) => String(x.day).slice(5));
-			const values = series.map((x) => Number(x.users) || 0);
+			const labels = seriesRows.map((x) => String(x.day).slice(5));
+			const values = seriesRows.map((x) => Number(x.users) || 0);
 			const cid = `c_${id}_${Date.now()}`;
 
 			return `<h2>${escapeHtml(title)}</h2>
@@ -364,24 +388,26 @@ export function plansCard({ id = 'plans', title = 'Plans', refreshSeconds = 60 }
 		id,
 		refreshSeconds,
 		async render({ db }) {
-			const r = await db
-				.prepare(
-					`SELECT p.title, p.duration_days,
-					   COUNT(CASE WHEN up.is_active = 1 THEN 1 END) as active,
-					   COUNT(CASE WHEN up.completed_at IS NOT NULL THEN 1 END) as completed,
-					   COUNT(*) as total
-					 FROM user_plans up
-					 JOIN plans p ON p.id = up.plan_id
-					 GROUP BY up.plan_id`
-				)
-				.all<{ title: string; duration_days: number; active: number; completed: number; total: number }>();
-			const plans = r.results ?? [];
-			if (!plans.length) return `<h2>${escapeHtml(title)}</h2><div class="loading">No active plans</div>`;
+			const rows = await db
+				.select({
+					title: plans.title,
+					durationDays: plans.durationDays,
+					active: sum(sql<number>`CASE WHEN ${userPlans.isActive} = 1 THEN 1 ELSE 0 END`),
+					completed: sum(sql<number>`CASE WHEN ${userPlans.completedAt} IS NOT NULL THEN 1 ELSE 0 END`),
+					total: count(),
+				})
+				.from(userPlans)
+				.innerJoin(plans, eq(plans.id, userPlans.planId))
+				.groupBy(userPlans.planId);
+			if (!rows.length) return `<h2>${escapeHtml(title)}</h2><div class="loading">No active plans</div>`;
 			const head = `<thead><tr><th>Plan</th><th>Days</th><th>Active</th><th>Done</th><th>Total</th><th>%</th></tr></thead>`;
-			const body = plans
+			const body = rows
 				.map((p) => {
-					const pct = p.total ? Math.round((p.completed / p.total) * 100) : 0;
-					return `<tr><td>${escapeHtml(p.title)}</td><td>${p.duration_days}</td><td>${p.active}</td><td>${p.completed}</td><td>${p.total}</td><td>${pct}%</td></tr>`;
+					const total = Number(p.total ?? 0);
+					const completed = Number(p.completed ?? 0);
+					const active = Number(p.active ?? 0);
+					const pct = total ? Math.round((completed / total) * 100) : 0;
+					return `<tr><td>${escapeHtml(p.title)}</td><td>${p.durationDays}</td><td>${active}</td><td>${completed}</td><td>${total}</td><td>${pct}%</td></tr>`;
 				})
 				.join('');
 			return `<h2>${escapeHtml(title)}</h2><table>${head}<tbody>${body}</tbody></table>`;
@@ -400,14 +426,11 @@ export function churnCard({ id = 'churn', title = 'Churn (opt-in, no window)', r
 		refreshSeconds,
 		async render({ db }) {
 			const r = await db
-				.prepare(
-					`SELECT COUNT(*) as churned
-					 FROM leads l
-					 LEFT JOIN message_windows mw ON mw.whatsapp = l.whatsapp AND mw.end_time > datetime('now')
-					 WHERE l.opt_in = 1 AND mw.id IS NULL`
-				)
-				.first<{ churned: number }>();
-			return kpiCard(title, [['Churned', r?.churned ?? 0]]);
+				.select({ churned: count() })
+				.from(leads)
+				.leftJoin(messageWindows, and(eq(messageWindows.whatsapp, leads.whatsapp), sql`${messageWindows.endTime} > datetime('now')`))
+				.where(and(eq(leads.optIn, 1), isNull(messageWindows.id)));
+			return kpiCard(title, [['Churned', r[0]?.churned ?? 0]]);
 		},
 	};
 }

@@ -1,13 +1,19 @@
 /**
  * Send the same payload to many users with rate limiting + audit log.
+ *
+ * From v0.2 onward: backed by Drizzle ORM.
  */
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { broadcastLog } from '../db/schema/broadcast.js';
+import { messageWindows } from '../db/schema/message_windows.js';
+import { leads } from '../db/schema/leads.js';
 import type { WhatsAppClient } from '../client/whatsapp.js';
 
 export interface BroadcastOptions {
 	client: WhatsAppClient;
-	db: D1Database;
+	db: DB;
 	channel: string;
-	logTable?: string;
 	sendIntervalMs?: number;
 	limit?: number;
 }
@@ -25,51 +31,54 @@ export interface BroadcastResult {
 
 export interface BroadcastRunArgs {
 	send: (user: BroadcastUser) => Promise<boolean>;
-	audienceQuery?: string;
-	audienceBindings?: unknown[];
+	/**
+	 * Custom audience generator. When omitted, the default audience is
+	 * opt-in users with an open message window who haven't been logged
+	 * on `channel` today.
+	 */
+	audience?: () => Promise<BroadcastUser[]>;
 }
 
 export class Broadcast {
 	readonly client: WhatsAppClient;
-	readonly db: D1Database;
+	readonly db: DB;
 	readonly channel: string;
-	readonly logTable: string;
 	readonly sendIntervalMs: number;
 	readonly limit: number;
 
-	constructor({ client, db, channel, logTable = 'broadcast_log', sendIntervalMs = 1000, limit = 1500 }: BroadcastOptions) {
+	constructor({ client, db, channel, sendIntervalMs = 1000, limit = 1500 }: BroadcastOptions) {
 		if (!client) throw new Error('Broadcast: client required');
 		if (!db) throw new Error('Broadcast: db required');
 		if (!channel) throw new Error('Broadcast: channel required');
 		this.client = client;
 		this.db = db;
 		this.channel = channel;
-		this.logTable = logTable;
 		this.sendIntervalMs = sendIntervalMs;
 		this.limit = limit;
 	}
 
-	defaultAudienceQuery(): string {
-		return `
-			SELECT mw.whatsapp
-			FROM message_windows mw
-			INNER JOIN leads l ON l.whatsapp = mw.whatsapp AND l.opt_in = 1
-			LEFT JOIN ${this.logTable} bl
-				ON bl.whatsapp = mw.whatsapp AND bl.channel = ? AND bl.date = date('now')
-			WHERE datetime('now') < mw.end_time
-			  AND bl.id IS NULL
-			ORDER BY mw.end_time
-			LIMIT ?`;
+	async defaultAudience(): Promise<BroadcastUser[]> {
+		return await this.db
+			.select({ whatsapp: messageWindows.whatsapp })
+			.from(messageWindows)
+			.innerJoin(leads, and(eq(leads.whatsapp, messageWindows.whatsapp), eq(leads.optIn, 1)))
+			.leftJoin(
+				broadcastLog,
+				and(
+					eq(broadcastLog.whatsapp, messageWindows.whatsapp),
+					eq(broadcastLog.channel, this.channel),
+					eq(broadcastLog.date, sql`date('now')`)
+				)
+			)
+			.where(and(sql`datetime('now') < ${messageWindows.endTime}`, isNull(broadcastLog.id)))
+			.orderBy(messageWindows.endTime)
+			.limit(this.limit);
 	}
 
-	async run({ send, audienceQuery, audienceBindings }: BroadcastRunArgs): Promise<BroadcastResult> {
+	async run({ send, audience }: BroadcastRunArgs): Promise<BroadcastResult> {
 		if (typeof send !== 'function') throw new Error('Broadcast.run: send() required');
 
-		const sql = audienceQuery || this.defaultAudienceQuery();
-		const bindings = audienceBindings || [this.channel, this.limit];
-
-		const r = await this.db.prepare(sql).bind(...bindings).all<BroadcastUser>();
-		const users = r.results ?? [];
+		const users = await (audience ? audience() : this.defaultAudience());
 
 		let delivered = 0;
 		let skipped = 0;
@@ -94,20 +103,21 @@ export class Broadcast {
 	async logDelivered(whatsapp: string): Promise<void> {
 		try {
 			await this.db
-				.prepare(`INSERT OR IGNORE INTO ${this.logTable} (whatsapp, channel, date) VALUES (?, ?, date('now'))`)
-				.bind(whatsapp, this.channel)
-				.run();
+				.insert(broadcastLog)
+				.values({ whatsapp, channel: this.channel, date: sql`date('now')` })
+				.onConflictDoNothing({ target: [broadcastLog.whatsapp, broadcastLog.channel, broadcastLog.date] });
 		} catch (e) {
 			console.error(`[Broadcast:${this.channel}] log:`, e instanceof Error ? e.message : e);
 		}
 	}
 
 	async wasDeliveredToday(whatsapp: string): Promise<boolean> {
-		const row = await this.db
-			.prepare(`SELECT 1 FROM ${this.logTable} WHERE whatsapp = ? AND channel = ? AND date = date('now') LIMIT 1`)
-			.bind(whatsapp, this.channel)
-			.first();
-		return !!row;
+		const r = await this.db
+			.select({ id: broadcastLog.id })
+			.from(broadcastLog)
+			.where(and(eq(broadcastLog.whatsapp, whatsapp), eq(broadcastLog.channel, this.channel), eq(broadcastLog.date, sql`date('now')`)))
+			.limit(1);
+		return r.length > 0;
 	}
 }
 

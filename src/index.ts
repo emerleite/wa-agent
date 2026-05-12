@@ -84,7 +84,8 @@ export type { Card, CardContext } from './dashboard/index.js';
 
 // Usage tracking
 export { UsageCounter } from './usage/usage_counter.js';
-export type { UsageRow, UsageCounterOptions } from './usage/usage_counter.js';
+export type { UsageCounterOptions } from './usage/usage_counter.js';
+export type { FeatureUsageRow } from './db/schema/usage.js';
 
 // User preferences
 export { PreferenceStore, definePreference } from './preference/preference_store.js';
@@ -92,7 +93,8 @@ export type { PreferenceStoreOptions, SetOptions as PreferenceSetOptions } from 
 
 // Per-channel opt-out
 export { ChannelOptOuts } from './channel/channel_opt_outs.js';
-export type { ChannelOptOutsOptions, OptOutRow } from './channel/channel_opt_outs.js';
+export type { ChannelOptOutsOptions } from './channel/channel_opt_outs.js';
+export type { ChannelOptOutRow } from './db/schema/channel_opt_outs.js';
 
 // Utils
 export { whatsappBold, stripMarkdown, chunkText, INTERACTIVE_BODY_MAX, TEXT_BODY_MAX } from './util/text.js';

@@ -11,29 +11,25 @@
  * tried that — three columns to start, more queued behind it) and scales
  * to any number of channels without `ALTER TABLE`.
  *
- * Plugs into `Broadcast` audience queries via `notOptedOutSql()`, which
- * returns a `NOT EXISTS (...)` SQL fragment ready to append to the
- * existing WHERE clause.
+ * Plugs into `Broadcast` audience queries via `notOptedOut()`, which
+ * returns a Drizzle `SQL` fragment ready to drop into a `.where(and(...))`.
+ *
+ * From v0.2 onward: backed by Drizzle ORM.
  */
-export interface ChannelOptOutsOptions {
-	db: D1Database;
-	table?: string;
-}
+import { and, eq, notExists, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { channelOptOuts } from '../db/schema/channel_opt_outs.js';
 
-export interface OptOutRow {
-	whatsapp: string;
-	channel: string;
-	opted_out_at: string;
+export interface ChannelOptOutsOptions {
+	db: DB;
 }
 
 export class ChannelOptOuts {
-	readonly db: D1Database;
-	readonly table: string;
+	readonly db: DB;
 
-	constructor({ db, table = 'channel_opt_outs' }: ChannelOptOutsOptions) {
+	constructor({ db }: ChannelOptOutsOptions) {
 		if (!db) throw new Error('ChannelOptOuts: db required');
 		this.db = db;
-		this.table = table;
 	}
 
 	/**
@@ -41,77 +37,68 @@ export class ChannelOptOuts {
 	 */
 	async optOut(whatsapp: string, channel: string): Promise<void> {
 		await this.db
-			.prepare(
-				`INSERT INTO ${this.table} (whatsapp, channel) VALUES (?, ?)
-				 ON CONFLICT(whatsapp, channel) DO NOTHING`
-			)
-			.bind(whatsapp, channel)
-			.run();
+			.insert(channelOptOuts)
+			.values({ whatsapp, channel })
+			.onConflictDoNothing({ target: [channelOptOuts.whatsapp, channelOptOuts.channel] });
 	}
 
 	/**
 	 * Re-subscribe to one channel. Idempotent (DELETE matches 0 or 1 row).
 	 */
 	async optIn(whatsapp: string, channel: string): Promise<void> {
-		await this.db
-			.prepare(`DELETE FROM ${this.table} WHERE whatsapp = ? AND channel = ?`)
-			.bind(whatsapp, channel)
-			.run();
+		await this.db.delete(channelOptOuts).where(and(eq(channelOptOuts.whatsapp, whatsapp), eq(channelOptOuts.channel, channel)));
 	}
 
 	async isOptedOut(whatsapp: string, channel: string): Promise<boolean> {
-		const row = await this.db
-			.prepare(`SELECT 1 FROM ${this.table} WHERE whatsapp = ? AND channel = ? LIMIT 1`)
-			.bind(whatsapp, channel)
-			.first();
-		return row != null;
+		const r = await this.db
+			.select({ one: sql`1` })
+			.from(channelOptOuts)
+			.where(and(eq(channelOptOuts.whatsapp, whatsapp), eq(channelOptOuts.channel, channel)))
+			.limit(1);
+		return r.length > 0;
 	}
 
 	/**
 	 * @returns the set of channels this user has muted.
 	 */
 	async listOptOuts(whatsapp: string): Promise<string[]> {
-		const r = await this.db
-			.prepare(`SELECT channel FROM ${this.table} WHERE whatsapp = ?`)
-			.bind(whatsapp)
-			.all<{ channel: string }>();
-		return (r.results ?? []).map((x) => x.channel);
+		const rows = await this.db.select({ channel: channelOptOuts.channel }).from(channelOptOuts).where(eq(channelOptOuts.whatsapp, whatsapp));
+		return rows.map((r) => r.channel);
 	}
 
 	/**
 	 * Mass-mute: returns whatsapp numbers currently opted out of `channel`.
 	 */
 	async listOptedOutFor(channel: string, { limit = 5000 }: { limit?: number } = {}): Promise<string[]> {
-		const r = await this.db
-			.prepare(`SELECT whatsapp FROM ${this.table} WHERE channel = ? LIMIT ?`)
-			.bind(channel, limit)
-			.all<{ whatsapp: string }>();
-		return (r.results ?? []).map((x) => x.whatsapp);
+		const rows = await this.db
+			.select({ whatsapp: channelOptOuts.whatsapp })
+			.from(channelOptOuts)
+			.where(eq(channelOptOuts.channel, channel))
+			.limit(limit);
+		return rows.map((r) => r.whatsapp);
 	}
 
 	/**
-	 * SQL fragment for audience queries.
+	 * Drizzle `SQL` fragment for audience queries.
 	 *
-	 *   const q = `
-	 *     SELECT mw.whatsapp FROM message_windows mw
-	 *     JOIN leads l ON l.whatsapp = mw.whatsapp AND l.opt_in = 1
-	 *     WHERE datetime('now') < mw.end_time
-	 *       AND ${channels.notOptedOutSql('devotional', 'mw.whatsapp')}
-	 *   `
+	 *   .where(and(
+	 *     ...,
+	 *     channels.notOptedOut('devotional', messageWindows.whatsapp)
+	 *   ))
 	 *
-	 * The fragment uses NOT EXISTS rather than a LEFT JOIN so it composes
-	 * cleanly inside any WHERE clause without disturbing the row count
-	 * upstream (e.g. when combined with broadcast_log dedupe joins).
+	 * Uses NOT EXISTS so it composes inside any WHERE clause without
+	 * disturbing the row count upstream.
 	 *
-	 * @param channel  channel name to check (parameterized by the caller)
-	 * @param userSqlExpr   SQL expression that yields the whatsapp number in
-	 *                      the outer query — default 'whatsapp'. Pass the
-	 *                      qualified alias (`mw.whatsapp`) when joining.
+	 * @param channel  channel name to check (parameterized, safe from injection)
+	 * @param userColumn   Drizzle column reference to the whatsapp number in
+	 *                     the outer query (e.g. `messageWindows.whatsapp`).
 	 */
-	notOptedOutSql(channel: string, userSqlExpr: string = 'whatsapp'): string {
-		// channel is interpolated literally — callers always pass a constant string,
-		// not user input. The whatsapp number stays parameterized via userSqlExpr.
-		const escaped = channel.replace(/'/g, "''");
-		return `NOT EXISTS (SELECT 1 FROM ${this.table} co WHERE co.whatsapp = ${userSqlExpr} AND co.channel = '${escaped}')`;
+	notOptedOut(channel: string, userColumn: SQLWrapper): SQL {
+		return notExists(
+			this.db
+				.select({ one: sql`1` })
+				.from(channelOptOuts)
+				.where(and(eq(channelOptOuts.whatsapp, userColumn), eq(channelOptOuts.channel, channel)))
+		);
 	}
 }

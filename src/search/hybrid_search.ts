@@ -1,8 +1,17 @@
 /**
  * Hybrid BM25 + Keyword (LIKE) search over a D1 FTS5 table, fused with RRF.
+ *
+ * From v0.2 onward: backed by Drizzle ORM. Content tables and FTS5 virtual
+ * tables are app-defined and not part of the framework's schema, so queries
+ * use Drizzle's `sql\`...\`` template — `sql.raw()` for identifiers (table /
+ * column names from the constructor) and `sql\`${x}\`` for user-supplied
+ * values (parameterized).
  */
+import { sql } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+
 export interface HybridSearchOptions {
-	db: D1Database;
+	db: DB;
 	contentTable: string;
 	ftsTable?: string;
 	searchColumns: string[];
@@ -25,7 +34,7 @@ export interface ScoredRow extends Record<string, unknown> {
 }
 
 export class HybridSearch {
-	readonly db: D1Database;
+	readonly db: DB;
 	readonly contentTable: string;
 	readonly ftsTable: string;
 	readonly searchColumns: string[];
@@ -67,28 +76,27 @@ export class HybridSearch {
 		if (!query || query.trim().length < 2) return [];
 
 		const expand = limit * 3;
-		const [bm25, keyword] = await Promise.all([
-			this.bm25(query, expand, filters),
-			this.like(query, expand, filters),
-		]);
+		const [bm25, keyword] = await Promise.all([this.bm25(query, expand, filters), this.like(query, expand, filters)]);
 
 		if (!bm25.length && !keyword.length) return [];
 		return this.rrf<T>(keyword as T[], bm25 as T[], limit);
 	}
 
 	async bm25<T = Record<string, unknown>>(query: string, limit: number, filters: Record<string, unknown> = {}): Promise<T[]> {
-		const where = this.buildFilters(filters);
+		const fts = sql.raw(this.ftsTable);
+		const content = sql.raw(this.contentTable);
+		const where = this.buildFilterFragment(filters);
 		try {
-			const sql = `
-				SELECT c.*, bm25(${this.ftsTable}) as score
-				FROM ${this.ftsTable} fts
-				JOIN ${this.contentTable} c ON c.rowid = fts.rowid
-				WHERE ${this.ftsTable} MATCH ?
-				${where.sql ? `AND ${where.sql}` : ''}
+			const stmt = sql`
+				SELECT c.*, bm25(${fts}) as score
+				FROM ${fts} fts
+				JOIN ${content} c ON c.rowid = fts.rowid
+				WHERE ${fts} MATCH ${query}
+				${where ? sql` AND ${where}` : sql``}
 				ORDER BY score
-				LIMIT ?`;
-			const r = await this.db.prepare(sql).bind(query, ...where.bindings, limit).all<T>();
-			return r.results ?? [];
+				LIMIT ${limit}`;
+			const r = await this.db.all<T>(stmt);
+			return r as T[];
 		} catch (e) {
 			console.error('[HybridSearch.bm25]', e instanceof Error ? e.message : e);
 			return [];
@@ -97,31 +105,34 @@ export class HybridSearch {
 
 	async like<T = Record<string, unknown>>(query: string, limit: number, filters: Record<string, unknown> = {}): Promise<T[]> {
 		const pattern = `%${query.replace(/[%_]/g, '\\$&')}%`;
-		const ors = this.searchColumns.map((c) => `${c} LIKE ? ESCAPE '\\'`).join(' OR ');
-		const where = this.buildFilters(filters);
+		const content = sql.raw(this.contentTable);
+		const ors = sql.join(
+			this.searchColumns.map((c) => sql`${sql.raw(c)} LIKE ${pattern} ESCAPE '\\'`),
+			sql` OR `
+		);
+		const where = this.buildFilterFragment(filters);
 		try {
-			const sql = `
-				SELECT * FROM ${this.contentTable}
+			const stmt = sql`
+				SELECT * FROM ${content}
 				WHERE (${ors})
-				${where.sql ? `AND ${where.sql}` : ''}
-				LIMIT ?`;
-			const bindings = [...this.searchColumns.map(() => pattern), ...where.bindings, limit];
-			const r = await this.db.prepare(sql).bind(...bindings).all<T>();
-			return r.results ?? [];
+				${where ? sql` AND ${where}` : sql``}
+				LIMIT ${limit}`;
+			const r = await this.db.all<T>(stmt);
+			return r as T[];
 		} catch (e) {
 			console.error('[HybridSearch.like]', e instanceof Error ? e.message : e);
 			return [];
 		}
 	}
 
-	private buildFilters(extra: Record<string, unknown> = {}): { sql: string; bindings: unknown[] } {
+	private buildFilterFragment(extra: Record<string, unknown> = {}) {
 		const merged = { ...this.filters, ...extra };
 		const keys = Object.keys(merged);
-		if (!keys.length) return { sql: '', bindings: [] };
-		return {
-			sql: keys.map((k) => `${k} = ?`).join(' AND '),
-			bindings: keys.map((k) => merged[k]),
-		};
+		if (!keys.length) return null;
+		return sql.join(
+			keys.map((k) => sql`${sql.raw(k)} = ${merged[k]}`),
+			sql` AND `
+		);
 	}
 
 	rrf<T extends Record<string, unknown>>(keyword: T[], bm25: T[], limit: number): (T & ScoredRow)[] {

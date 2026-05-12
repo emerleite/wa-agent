@@ -47,12 +47,6 @@ export class Agent {
 	readonly client: WhatsAppClient;
 	/** Drizzle ORM client (v0.2+). Use `agent.db.select()/.insert()/...` in handlers. */
 	readonly db: DB;
-	/**
-	 * Raw D1 binding. Temporary while we migrate the remaining stores to Drizzle
-	 * (sessions B + C). Public so consumers writing custom stores can still
-	 * reach into raw D1 if needed. Will be removed once everything is on Drizzle.
-	 */
-	readonly d1: D1Database;
 	readonly queue: D1CoalesceQueue;
 	readonly session: SessionStore;
 	readonly log: MessageLog;
@@ -100,7 +94,6 @@ export class Agent {
 		this.client = new WhatsAppClient({ endpoint: whatsapp.endpoint, token: whatsapp.token });
 		this.verifyToken = whatsapp.verifyToken ?? null;
 		this.appSecret = whatsapp.appSecret ?? null;
-		this.d1 = db;
 		this.db = createDb(db);
 		this.ai = ai;
 		this.summarizer = summarizer;
@@ -109,8 +102,6 @@ export class Agent {
 		this.gate = gate;
 		this.onboarding = onboarding;
 
-		// Unconverted stores (session C) still take raw D1 via this.d1.
-		// Converted stores (sessions A + B) take the Drizzle client.
 		this.queue = new D1CoalesceQueue({ db: this.db, ...queue });
 		this.session = stores.session ?? new SessionStore({ db: this.db });
 		this.log = stores.log ?? new MessageLog({ db: this.db });

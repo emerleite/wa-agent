@@ -187,7 +187,7 @@ The `reply` object is pre-bound to the current user — `reply.text(...)`, `repl
 ```js
 agent.onText(async ({ text, reply, session }) => {
 	await reply.markRead()
-	await reply.ai(text, { threadId: session?.thread_id })
+	await reply.ai(text, { threadId: session?.threadId })
 })
 ```
 
@@ -285,7 +285,7 @@ const r = await plans.markDone(whatsapp, planId, day)
 One item per slot per user per day, weighted random with recent-impression skipping. Works for ads, content tips, daily verses, etc.
 
 ```js
-const slot = new SlotDelivery({ db: env.DB })
+const slot = new SlotDelivery({ db: agent.db })
 const users = await slot.usersForSlot('morning')
 for (const u of users) {
 	const item = await slot.pickForUser(u.whatsapp)
@@ -332,7 +332,7 @@ agent.onText(async ({ user, text, reply, gate, session }) => {
 		return
 	}
 	await reply.markRead()
-	await reply.ai(text, { threadId: session?.thread_id })
+	await reply.ai(text, { threadId: session?.threadId })
 })
 ```
 
@@ -564,7 +564,7 @@ if (!ok) await reply.text('You hit today\'s image cap. Resets at midnight UTC.')
 // Analytics
 const todayCount = await usage.getDailyCount(whatsapp, 'ai_gate_blocked')
 const lifetime   = await usage.getLifetimeCount(whatsapp, 'image_gen')
-const dauForFeature = await usage.distinctUsersSince('image_gen', "datetime('now', '-1 day')")
+const dauForFeature = await usage.distinctUsersSince('image_gen', { sinceHoursAgo: 24 })
 ```
 
 `tryRecordWithCap` is best-effort under D1 (no row-level locks); two concurrent calls could race past the cap by 1. Acceptable for chat apps.

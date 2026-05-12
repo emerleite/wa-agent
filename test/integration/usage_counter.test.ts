@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
 import { UsageCounter } from '../../src/usage/usage_counter.js';
+import { createDb } from '../../src/db/client.js';
 
-const db = (env as { DB: D1Database }).DB;
+const d1 = (env as { DB: D1Database }).DB;
+const db = createDb(d1);
 
 beforeEach(async () => {
-	await db.prepare('DELETE FROM feature_usage').run();
+	await d1.prepare('DELETE FROM feature_usage').run();
 });
 
 describe('UsageCounter', () => {
@@ -13,14 +15,14 @@ describe('UsageCounter', () => {
 
 	it('record() inserts a row with feature + key', async () => {
 		await counter.record('5551', 'image_gen', 'verse:jo:3:16');
-		const row = await db.prepare("SELECT * FROM feature_usage WHERE whatsapp = '5551'").first<{ feature: string; key: string }>();
+		const row = await d1.prepare("SELECT * FROM feature_usage WHERE whatsapp = '5551'").first<{ feature: string; key: string }>();
 		expect(row?.feature).toBe('image_gen');
 		expect(row?.key).toBe('verse:jo:3:16');
 	});
 
 	it('record() works with null key', async () => {
 		await counter.record('5551', 'tts');
-		const row = await db.prepare("SELECT key FROM feature_usage WHERE whatsapp = '5551'").first<{ key: string | null }>();
+		const row = await d1.prepare("SELECT key FROM feature_usage WHERE whatsapp = '5551'").first<{ key: string | null }>();
 		expect(row?.key).toBeNull();
 	});
 
@@ -30,7 +32,7 @@ describe('UsageCounter', () => {
 		await counter.record('5551', 'image_gen');
 		await counter.record('5552', 'tts');
 		// Backdate one to yesterday
-		await db.prepare(`INSERT INTO feature_usage (whatsapp, feature, used_at) VALUES ('5551', 'tts', datetime('now', '-1 day'))`).run();
+		await d1.prepare(`INSERT INTO feature_usage (whatsapp, feature, used_at) VALUES ('5551', 'tts', datetime('now', '-1 day'))`).run();
 
 		expect(await counter.getDailyCount('5551', 'tts')).toBe(2);
 		expect(await counter.getDailyCount('5551', 'image_gen')).toBe(1);
@@ -40,7 +42,7 @@ describe('UsageCounter', () => {
 
 	it('getLifetimeCount counts all time', async () => {
 		await counter.record('5551', 'tts');
-		await db.prepare(`INSERT INTO feature_usage (whatsapp, feature, used_at) VALUES ('5551', 'tts', datetime('now', '-30 days'))`).run();
+		await d1.prepare(`INSERT INTO feature_usage (whatsapp, feature, used_at) VALUES ('5551', 'tts', datetime('now', '-30 days'))`).run();
 		expect(await counter.getLifetimeCount('5551', 'tts')).toBe(2);
 	});
 

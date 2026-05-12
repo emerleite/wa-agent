@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { HybridSearch } from '../../src/search/hybrid_search.js';
+import type { DB } from '../../src/db/client.js';
 
 // We're only testing the pure RRF math here. The DB-backed bm25/like methods
 // have their own integration tests against a seeded D1 table.
 function buildSearcher() {
 	return new HybridSearch({
 		// db is unused for rrf()
-		db: {} as D1Database,
+		db: {} as DB,
 		contentTable: 'docs',
 		searchColumns: ['title', 'body'],
 	});

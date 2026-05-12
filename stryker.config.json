@@ -1,6 +1,6 @@
 {
 	"$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-	"_comment": "Mutation testing for wa-agent. Mutates only files exercised by the unit suite (vitest.config.unit.ts) — files that are pure-SQL CRUD (UsageCounter, MessageLog, SessionStore, LeadStore, MessageWindow, SequentialPlan, Broadcast, ReEngagement) are intentionally excluded because there's no algorithmic logic to mutate; their behavior is verified by test/integration/.",
+	"_comment": "Mutation testing for wa-agent. Mutates only files exercised by the unit suite (vitest.config.unit.ts) — pure CRUD-over-Drizzle files (UsageCounter, PreferenceStore, MessageLog, SessionStore, LeadStore, MessageWindow, SequentialPlan, Broadcast, ReEngagement, ChannelOptOuts) are intentionally excluded because there's no algorithmic logic to mutate; their behavior is verified by test/integration/.",
 	"packageManager": "npm",
 	"testRunner": "vitest",
 	"vitest": {
@@ -25,7 +25,6 @@
 		"src/ai/summarizer.ts",
 		"src/ai/transcriber.ts",
 		"src/dashboard/index.ts",
-		"src/preference/preference_store.ts",
 		"src/util/quiet_hours.ts"
 	],
 	"thresholds": {

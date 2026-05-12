@@ -3,11 +3,13 @@ import { env } from 'cloudflare:test';
 import { ReEngagement } from '../../src/scheduler/reengagement.js';
 import { MockWhatsAppClient } from '../helpers/mock_client.js';
 import type { WhatsAppClient } from '../../src/client/whatsapp.js';
+import { createDb } from '../../src/db/client.js';
 
-const db = (env as { DB: D1Database }).DB;
+const d1 = (env as { DB: D1Database }).DB;
+const db = createDb(d1);
 
 beforeEach(async () => {
-	await db.prepare('DELETE FROM engagement_answers').run();
+	await d1.prepare('DELETE FROM engagement_answers').run();
 });
 
 function makeRE(client: MockWhatsAppClient, topicId = 1) {
@@ -53,7 +55,10 @@ describe('ReEngagement', () => {
 		const client = new MockWhatsAppClient();
 		const re = makeRE(client);
 		await re.recordAnswer('5551', 'engagement_1_a');
-		const row = await db.prepare(`SELECT answer, date, julianday('now') - julianday(date) AS day_offset FROM engagement_answers WHERE whatsapp = ?`).bind('5551').first<{ answer: string; date: string; day_offset: number }>();
+		const row = await d1
+			.prepare(`SELECT answer, date, julianday('now') - julianday(date) AS day_offset FROM engagement_answers WHERE whatsapp = ?`)
+			.bind('5551')
+			.first<{ answer: string; date: string; day_offset: number }>();
 		expect(row?.answer).toBe('a');
 		expect(row?.day_offset).toBeGreaterThanOrEqual(1);
 		expect(row?.day_offset).toBeLessThan(2);
@@ -63,7 +68,7 @@ describe('ReEngagement', () => {
 		const client = new MockWhatsAppClient();
 		const re = makeRE(client);
 		await re.recordAnswer('5551', 'a');
-		const row = await db.prepare(`SELECT answer FROM engagement_answers WHERE whatsapp = ?`).bind('5551').first<{ answer: string }>();
+		const row = await d1.prepare(`SELECT answer FROM engagement_answers WHERE whatsapp = ?`).bind('5551').first<{ answer: string }>();
 		expect(row?.answer).toBe('a');
 	});
 
@@ -82,12 +87,12 @@ describe('ReEngagement', () => {
 			const re = makeRE(client);
 
 			// 6 days ago: answered "a"
-			await db
+			await d1
 				.prepare(`INSERT INTO engagement_answers (engagement_id, whatsapp, answer, date) VALUES (?, ?, ?, date('now', '-6 days'))`)
 				.bind(1, '5551', 'a')
 				.run();
 			// 4 days ago: answered "b"
-			await db
+			await d1
 				.prepare(`INSERT INTO engagement_answers (engagement_id, whatsapp, answer, date) VALUES (?, ?, ?, date('now', '-4 days'))`)
 				.bind(1, '5551', 'b')
 				.run();
@@ -103,7 +108,7 @@ describe('ReEngagement', () => {
 			const re1 = makeRE(client, 1);
 			const re2 = makeRE(client, 2);
 
-			await db
+			await d1
 				.prepare(`INSERT INTO engagement_answers (engagement_id, whatsapp, answer, date) VALUES (?, ?, ?, date('now', '-3 days'))`)
 				.bind(1, '5551', 'a')
 				.run();
@@ -118,7 +123,7 @@ describe('ReEngagement', () => {
 			const client = new MockWhatsAppClient();
 			const re = makeRE(client);
 
-			await db
+			await d1
 				.prepare(`INSERT INTO engagement_answers (engagement_id, whatsapp, answer, date) VALUES (?, ?, ?, date('now', '-2 days'))`)
 				.bind(1, '5551', 'a')
 				.run();

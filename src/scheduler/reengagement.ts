@@ -1,6 +1,11 @@
 /**
  * Daily yes/no question with weekly progress tracking.
+ *
+ * From v0.2 onward: backed by Drizzle ORM.
  */
+import { and, eq, gte, sql } from 'drizzle-orm';
+import type { DB } from '../db/client.js';
+import { engagementAnswers } from '../db/schema/broadcast.js';
 import type { WhatsAppClient } from '../client/whatsapp.js';
 
 export interface ReEngagementQuestion {
@@ -16,7 +21,7 @@ export interface ReEngagementTemplate {
 
 export interface ReEngagementOptions {
 	client: WhatsAppClient;
-	db: D1Database;
+	db: DB;
 	topicId: number;
 	question: ReEngagementQuestion;
 	template?: ReEngagementTemplate | null;
@@ -30,7 +35,7 @@ export interface DayProgress {
 
 export class ReEngagement {
 	readonly client: WhatsAppClient;
-	readonly db: D1Database;
+	readonly db: DB;
 	readonly topicId: number;
 	readonly question: Required<ReEngagementQuestion>;
 	readonly template: ReEngagementTemplate | null;
@@ -73,38 +78,57 @@ export class ReEngagement {
 		});
 	}
 
-	async recordAnswer(
-		whatsapp: string,
-		buttonOrAnswer: string,
-		{ dateExpr = "date('now', '-1 day')" }: { dateExpr?: string } = {}
-	): Promise<unknown> {
-		const answer = buttonOrAnswer.startsWith('engagement_') ? buttonOrAnswer.split('_')[2] : buttonOrAnswer;
-		return await this.db
-			.prepare(
-				`INSERT INTO engagement_answers (engagement_id, whatsapp, answer, date)
-				 VALUES (?, ?, ?, ${dateExpr})
-				 RETURNING *`
-			)
-			.bind(this.topicId, whatsapp, answer)
-			.first();
+	/**
+	 * Record a user's answer. `daysAgo` defaults to 1 — answers usually arrive
+	 * the day *after* the question went out, so we attribute them to yesterday.
+	 */
+	async recordAnswer(whatsapp: string, buttonOrAnswer: string, { daysAgo = 1 }: { daysAgo?: number } = {}): Promise<unknown> {
+		const answer = buttonOrAnswer.startsWith('engagement_') ? buttonOrAnswer.split('_')[2]! : buttonOrAnswer;
+		const r = await this.db
+			.insert(engagementAnswers)
+			.values({
+				engagementId: this.topicId,
+				whatsapp,
+				answer,
+				date: sql`date('now', ${`-${daysAgo} days`})`,
+			})
+			.returning();
+		return r[0] ?? null;
 	}
 
+	/**
+	 * Returns a 7-row array (one per day for the trailing week), with `answer`
+	 * = null for days the user didn't respond. Day 1 = 7 days ago, Day 7 = today.
+	 */
 	async weekProgress(whatsapp: string): Promise<DayProgress[]> {
-		const r = await this.db
-			.prepare(
-				`WITH RECURSIVE week(n, d) AS (
-					SELECT 1, date('now', '-7 days')
-					UNION ALL
-					SELECT n + 1, date(d, '+1 day') FROM week WHERE n < 7
+		const rows = await this.db
+			.select({ date: engagementAnswers.date, answer: engagementAnswers.answer })
+			.from(engagementAnswers)
+			.where(
+				and(
+					eq(engagementAnswers.engagementId, this.topicId),
+					eq(engagementAnswers.whatsapp, whatsapp),
+					gte(engagementAnswers.date, sql`date('now', '-7 days')`)
 				)
-				SELECT week.n AS day_of_week, week.d AS date, ea.answer
-				FROM week
-				LEFT JOIN engagement_answers ea
-				  ON ea.date = week.d AND ea.engagement_id = ? AND ea.whatsapp = ?
-				ORDER BY week.n`
-			)
-			.bind(this.topicId, whatsapp)
-			.all<DayProgress>();
-		return r.results ?? [];
+			);
+		const byDate = new Map<string, string>();
+		for (const r of rows) byDate.set(r.date, r.answer);
+
+		const out: DayProgress[] = [];
+		for (let n = 1; n <= 7; n++) {
+			const d = isoDate(daysFromNow(n - 7));
+			out.push({ day_of_week: n, date: d, answer: byDate.get(d) ?? null });
+		}
+		return out;
 	}
+}
+
+function daysFromNow(offset: number): Date {
+	const d = new Date();
+	d.setUTCDate(d.getUTCDate() + offset);
+	return d;
+}
+
+function isoDate(d: Date): string {
+	return d.toISOString().slice(0, 10);
 }

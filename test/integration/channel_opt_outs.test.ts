@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
+import { and, eq } from 'drizzle-orm';
 import { ChannelOptOuts } from '../../src/channel/channel_opt_outs.js';
+import { createDb } from '../../src/db/client.js';
+import { leads } from '../../src/db/schema/leads.js';
 
-const db = (env as { DB: D1Database }).DB;
+const d1 = (env as { DB: D1Database }).DB;
+const db = createDb(d1);
 
 beforeEach(async () => {
-	await db.prepare('DELETE FROM channel_opt_outs').run();
+	await d1.prepare('DELETE FROM channel_opt_outs').run();
+	await d1.prepare('DELETE FROM leads').run();
 });
 
 describe('ChannelOptOuts', () => {
@@ -23,7 +28,7 @@ describe('ChannelOptOuts', () => {
 	it('optOut is idempotent', async () => {
 		await opts.optOut('5551', 'devotional');
 		await opts.optOut('5551', 'devotional');
-		const r = await db.prepare(`SELECT COUNT(*) as c FROM channel_opt_outs WHERE whatsapp = '5551'`).first<{ c: number }>();
+		const r = await d1.prepare(`SELECT COUNT(*) as c FROM channel_opt_outs WHERE whatsapp = '5551'`).first<{ c: number }>();
 		expect(r?.c).toBe(1);
 	});
 
@@ -65,34 +70,33 @@ describe('ChannelOptOuts', () => {
 		expect(list.sort()).toEqual(['5551', '5552']);
 	});
 
-	describe('notOptedOutSql', () => {
-		it('returns a NOT EXISTS fragment', () => {
-			const sql = opts.notOptedOutSql('devotional');
-			expect(sql).toContain('NOT EXISTS');
-			expect(sql).toContain("co.channel = 'devotional'");
-		});
-
-		it('uses qualified user expr when supplied', () => {
-			const sql = opts.notOptedOutSql('devotional', 'mw.whatsapp');
-			expect(sql).toContain('co.whatsapp = mw.whatsapp');
-		});
-
+	describe('notOptedOut (Drizzle fragment)', () => {
 		it('filters audience queries correctly', async () => {
-			// Seed three users; mute one
+			// Seed three lead rows; mute one.
+			for (const wa of ['5551', '5552', '5553']) {
+				await d1.prepare(`INSERT INTO leads (whatsapp, ad_data, opt_in) VALUES (?, '{}', 1)`).bind(wa).run();
+			}
 			await opts.optOut('5551', 'devotional');
-			// Qualified user expression — required when the outer query has a column
-			// named `whatsapp` that would otherwise shadow the correlated subquery.
-			const sql = `
-				WITH u(whatsapp) AS (SELECT '5551' UNION SELECT '5552' UNION SELECT '5553')
-				SELECT u.whatsapp FROM u WHERE ${opts.notOptedOutSql('devotional', 'u.whatsapp')}
-				ORDER BY u.whatsapp`;
-			const r = await db.prepare(sql).all<{ whatsapp: string }>();
-			expect(r.results?.map((x) => x.whatsapp)).toEqual(['5552', '5553']);
+
+			const r = await db.select({ whatsapp: leads.whatsapp }).from(leads).where(and(eq(leads.optIn, 1), opts.notOptedOut('devotional', leads.whatsapp)));
+			const remaining = r.map((x) => x.whatsapp).sort();
+			expect(remaining).toEqual(['5552', '5553']);
 		});
 
-		it('escapes single quotes in channel name', () => {
-			const sql = opts.notOptedOutSql("o'reilly");
-			expect(sql).toContain("co.channel = 'o''reilly'");
+		it('opting back in restores the user to the audience', async () => {
+			await d1.prepare(`INSERT INTO leads (whatsapp, ad_data, opt_in) VALUES ('5551', '{}', 1)`).run();
+			await opts.optOut('5551', 'devotional');
+			await opts.optIn('5551', 'devotional');
+			const r = await db.select({ whatsapp: leads.whatsapp }).from(leads).where(opts.notOptedOut('devotional', leads.whatsapp));
+			expect(r.map((x) => x.whatsapp)).toEqual(['5551']);
+		});
+
+		it('isolates channels in the audience filter', async () => {
+			await d1.prepare(`INSERT INTO leads (whatsapp, ad_data, opt_in) VALUES ('5551', '{}', 1)`).run();
+			await opts.optOut('5551', 'plan');
+			// Muted on 'plan' but still on the 'devotional' audience.
+			const r = await db.select({ whatsapp: leads.whatsapp }).from(leads).where(opts.notOptedOut('devotional', leads.whatsapp));
+			expect(r.map((x) => x.whatsapp)).toEqual(['5551']);
 		});
 	});
 });
