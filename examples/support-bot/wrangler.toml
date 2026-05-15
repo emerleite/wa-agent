@@ -1,0 +1,32 @@
+name = "support-bot"
+main = "src/index.js"
+compatibility_date = "2026-04-22"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "support-bot"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
+# Optional: Analytics Engine binding for the typed event stream. Omit to no-op.
+# [[analytics_engine_datasets]]
+# binding = "EVENTS"
+# dataset = "support_bot_events"
+
+[vars]
+# Required at runtime — fill in or move to .dev.vars / secrets.
+# META_WA_ENDPOINT      = "https://graph.facebook.com/v22.0/<phone-number-id>"
+# META_WA_TOKEN         = "<bearer>"
+# META_WH_TOKEN         = "<webhook verify token>"
+# META_APP_SECRET       = "<app secret for X-Hub-Signature-256>"
+# AZURE_OPENAI_ENDPOINT = "https://<resource>.openai.azure.com"
+# AZURE_OPENAI_API_KEY  = "<key>"
+# AZURE_API_VERSION     = "2024-08-01-preview"
+# AZURE_MODEL_DEPLOYMENT = "gpt-4o-mini"
+# ASSISTANT_ID          = "asst_..."
+# BILLING_API_URL       = "https://billing.example.com/subscriptions"
+# BILLING_API_TOKEN     = "<bearer>"
+
+# Run all migrations from the wa-agent package:
+#   wrangler d1 migrations apply support-bot \
+#     --migrations-dir ../../migrations

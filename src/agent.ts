@@ -19,6 +19,7 @@ import { makeEmit, type Emit, type EventsBindings } from './events/emit.js';
 import type { AgentPipeline } from './pipeline/pipeline.js';
 import type { PipelineContext } from './pipeline/types.js';
 import type { Blocklist } from './security/blocklist.js';
+import { asEnricher, type ReplyEnricher, type ReplyEnricherFn } from './ai/reply_enricher.js';
 import type { AIClient, ButtonsPayload, CtaUrlPayload, HandlerContext, ReplyHelper, SummarizerLike, InboundEnvelope, InboundMessage } from './types.js';
 
 export interface AgentOptions {
@@ -66,9 +67,19 @@ export interface AgentOptions {
 	 * `source: 'blocklist'` for triage.
 	 */
 	blocklist?: Blocklist | null;
+	/**
+	 * Post-LLM enrichment applied inside `reply.ai()` before the answer is
+	 * sent and logged. Runs on both the long answer and the summary, so any
+	 * appended footer survives summarization. Pass `null` (default) to skip.
+	 *
+	 * Use cases: append citation footers, CTA links, UTM-tagged URLs, or
+	 * affiliate-suffixes for free-tier users. Plain functions are accepted
+	 * for inline cases (no class needed).
+	 */
+	replyEnricher?: ReplyEnricher | ReplyEnricherFn | null;
 }
 
-type Lifecycle = 'onFirstContact' | 'onMessage' | 'onError';
+type Lifecycle = 'onFirstContact' | 'onMessage' | 'afterReply' | 'onError';
 
 export class Agent {
 	readonly client: WhatsAppClient;
@@ -95,9 +106,11 @@ export class Agent {
 	readonly pipeline: AgentPipeline | null;
 	readonly tenantId: string | null;
 	readonly blocklist: Blocklist | null;
+	readonly replyEnricher: ReplyEnricher | null;
 	readonly _lifecycleHooks: Record<Lifecycle, Array<(payload: unknown) => void | Promise<void>>> = {
 		onFirstContact: [],
 		onMessage: [],
+		afterReply: [],
 		onError: [],
 	};
 	readonly _cronJobs = new Map<string, (args: { env: unknown; ctx: ExecutionContext; agent: Agent }) => void | Promise<void>>();
@@ -120,6 +133,7 @@ export class Agent {
 			pipeline = null,
 			tenantId = null,
 			blocklist = null,
+			replyEnricher = null,
 		} = opts;
 
 		if (!whatsapp?.endpoint || !whatsapp?.token) {
@@ -141,6 +155,7 @@ export class Agent {
 		this.pipeline = pipeline;
 		this.tenantId = tenantId;
 		this.blocklist = blocklist;
+		this.replyEnricher = replyEnricher ? asEnricher(replyEnricher) : null;
 
 		this.queue = new D1CoalesceQueue({ db: this.db, ...queue });
 		this.session = stores.session ?? new SessionStore({ db: this.db });
@@ -181,6 +196,18 @@ export class Agent {
 
 	on(event: Lifecycle, handler: (payload: unknown) => void | Promise<void>): this {
 		this._lifecycleHooks[event].push(handler);
+		return this;
+	}
+
+	/**
+	 * Sugar for `on('afterReply', ...)` with a typed handler — runs after
+	 * the per-message dispatch completes (button / command / fallback) but
+	 * before `handleBatch` returns. Use for opportunistic side-channel sends
+	 * (reactive ads, contextual tips), analytics nudges, etc. Errors are
+	 * caught + logged; they do NOT fail the inbound turn.
+	 */
+	afterReply(handler: (ctx: HandlerContext) => void | Promise<void>): this {
+		this._lifecycleHooks.afterReply.push(handler as (payload: unknown) => void | Promise<void>);
 		return this;
 	}
 
@@ -237,6 +264,7 @@ export class Agent {
 
 		try {
 			await this.dispatch(ctx);
+			await this.runLifecycle('afterReply', ctx);
 		} catch (err) {
 			console.error('[Agent] dispatch error:', err instanceof Error ? err.stack || err.message : err);
 			await this.emit({
@@ -359,9 +387,15 @@ export class Agent {
 						}
 						const { answer, threadId: newTid } = decision.reply;
 						await self.session.set(whatsapp, { threadId: newTid });
-						await self.log.updateAnswer(inboundWamid, { body: text, response: answer, summary: answer });
-						if (answer) await c.sendText(whatsapp, answer);
-						return { answer, threadId: newTid };
+						const finalAnswer = await self.enrichAnswer(answer, {
+							whatsapp,
+							question: text,
+							wamid: inboundWamid,
+							threadId: newTid,
+						});
+						await self.log.updateAnswer(inboundWamid, { body: text, response: finalAnswer, summary: finalAnswer });
+						if (finalAnswer) await c.sendText(whatsapp, finalAnswer);
+						return { answer: finalAnswer, threadId: newTid };
 					} catch (err) {
 						outcome = 'error';
 						throw err;
@@ -373,14 +407,17 @@ export class Agent {
 				const { answer, threadId: newTid } = await self.ai.chat({ threadId: opts?.threadId ?? null, text });
 				await self.session.set(whatsapp, { threadId: newTid });
 
-				let outgoing = answer;
-				const long = !!answer && answer.length > self.summarizeOver;
-				if (long && self.summarizer && answer) {
-					const summary = await self.summarizer.summarize(answer);
-					if (summary) outgoing = summary;
+				const enrichCtx = { whatsapp, question: text, wamid: inboundWamid, threadId: newTid };
+				const enrichedAnswer = await self.enrichAnswer(answer, enrichCtx);
+
+				let outgoing = enrichedAnswer;
+				const long = !!enrichedAnswer && enrichedAnswer.length > self.summarizeOver;
+				if (long && self.summarizer && enrichedAnswer) {
+					const summary = await self.summarizer.summarize(enrichedAnswer);
+					if (summary) outgoing = await self.enrichAnswer(summary, enrichCtx);
 				}
 
-				await self.log.updateAnswer(inboundWamid, { body: text, response: answer, summary: outgoing });
+				await self.log.updateAnswer(inboundWamid, { body: text, response: enrichedAnswer, summary: outgoing });
 				if (outgoing) await c.sendText(whatsapp, outgoing);
 
 				if (long && self.summarizer) {
@@ -389,9 +426,22 @@ export class Agent {
 						buttons: [{ id: `expand_${inboundWamid}`, title: 'Show full answer' }],
 					});
 				}
-				return { answer, threadId: newTid };
+				return { answer: enrichedAnswer, threadId: newTid };
 			},
 		};
+	}
+
+	private async enrichAnswer(
+		answer: string | null,
+		ctx: { whatsapp: string; question: string; wamid: string; threadId: string | null | undefined },
+	): Promise<string | null> {
+		if (!answer || !this.replyEnricher) return answer;
+		try {
+			return await this.replyEnricher.enrich(answer, ctx);
+		} catch (e) {
+			console.error('[Agent] replyEnricher threw, using raw answer:', e instanceof Error ? e.message : e);
+			return answer;
+		}
 	}
 
 	private async runLifecycle(name: Lifecycle, payload: unknown): Promise<void> {

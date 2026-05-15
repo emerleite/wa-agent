@@ -723,6 +723,11 @@ agent.on('onFirstContact', async ({ inbound }) => {
 agent.on('onMessage', async (ctx) => {
 	// Runs before dispatch — log, instrument, etc.
 })
+agent.afterReply(async (ctx) => {
+	// Runs AFTER dispatch — opportunistic side-channel sends (reactive ads,
+	// contextual tips, analytics nudges). Errors here are caught + logged
+	// without failing the inbound turn. See RateCappedDispatcher.
+})
 agent.on('onError', async ({ error, ...ctx }) => {
 	// Pipeline failed; tell the user something graceful.
 })
@@ -771,7 +776,8 @@ export default {
 ## Examples
 
 - [`examples/echo-bot/`](./examples/echo-bot) — minimal: webhook → echo. About 30 lines.
-- [`examples/full-bot/`](./examples/full-bot) — every primitive in one bot: AI, summarization, transcription, devotional broadcast, daily yes/no, 21-day plan, TTS narration cached in R2.
+- [`examples/support-bot/`](./examples/support-bot) — focused: AI pipeline + ReplyEnricher CTA + tier gate, no cron. About 100 lines. The right starting point if you want an AI support agent, not a content calendar.
+- [`examples/full-bot/`](./examples/full-bot) — every primitive in one bot: AI with reply-enricher CTA footer, summarization, transcription, devotional broadcast, daily yes/no, 21-day plan, TTS narration cached in R2, payment-link-backed upsell, `link <code>` account redemption, opportunistic free-tier tip via `afterReply`.
 
 ## Feature audit — bibliafala → wa-agent
 
@@ -820,6 +826,13 @@ The framework was extracted from a production bot ([bibliafala](https://bibliafa
 | Daily cleanup of completed queue rows | `D1CoalesceQueue.cleanup()` |
 | Template-message fallback when out of window | `ReEngagement` template path + raw `WhatsAppClient.sendTemplate()` |
 | `security/blocklist.js` (per-isolate cache + D1, fail-open) | `Blocklist` (Agent option: blocked inbound dropped before any handler) |
+| `account_links/link_handler.js` (hashed code redeem + identity ⇄ whatsapp map) | `AccountLinkStore` + `matchLinkCommand` (web side calls `issueCode`, bot calls `redeem`) |
+| `utm.js` (append `utm_source/medium/campaign` to outbound links) | `withUtm` + `createUtmTagger` (preserves query + `#anchor`) |
+| `ai/citation_enricher.js` (3-layer answer enrichment: citations → search → CTA) | `ReplyEnricher` + `LayeredReplyEnricher` (Agent option, runs inside `reply.ai()` on both long + summary) |
+| `ads/reactive.js` (after-reply hook with daily cap + min-gap + quiet-hours) | `agent.afterReply(...)` + `RateCappedDispatcher` (on top of `UsageCounter`) |
+| `external/biblia_sub_gateway.js` `getPaymentLink` (per-user upgrade URL) | `HttpPaymentLinkProvider` + `expandTokens('{{subscription_link}}', ...)` |
+| `verse_images/handler.js` + `usage.js` (button → cap → R2 cache → send) | `ButtonImageDispatcher` (renderer-agnostic; supply `encode/decode/render/caption/cacheKey`) |
+| `devotional/content_generator.js` (idempotent daily-content table self-heal via LLM) | `ContentGenerator` (table-agnostic; supply `generate(date) => string`, `resetColumns` for derived artifacts) |
 
 ### Deliberately NOT extracted — domain-specific
 
@@ -905,29 +918,48 @@ Run takes ~18s. Current scores (`reports/mutation/index.html` after a run):
 | Module | Mutation score | Covered-only |
 |---|---|---|
 | `router/command_router` | 95.83% | 100% |
+| `scheduler/rate_capped_dispatcher` | 79.57% | 92.50% |
 | `webhook/verify` | 90.74% | 92.45% |
+| `media/azure_tts` | 91.43% | 91.43% |
+| `util/utm` | 86.67% | 86.67% |
 | `media/r2_cache` | 86.96% | 86.96% |
-| `gate/access_gate` | 82.35% | 84.85% |
+| `gate/access_gate` | 84.62% | 86.84% |
+| `ai/reply_enricher` | 83.33% | 83.33% |
+| `router/button_router` | 78.57% | 81.48% |
+| `scheduler/slot_delivery` | 32.65% | 84.21% |
+| `media/button_image_dispatcher` | 73.08% | 80.51% |
+| `dashboard` | 20.16% | 80.00% |
 | `gate/tier_provider` | 79.63% | 79.63% |
 | `util/text` | 79.31% | 79.31% |
-| `router/button_router` | 78.57% | 81.48% |
-| `preference/preference_store` | 75.00% | 90.00% |
+| `util/quiet_hours` | 78.31% | 78.31% |
 | `flow/upsell` | 75.34% | 78.57% |
-| `util/quiet_hours` | 74.70% | 74.70% |
-| `ai/openai_assistant` | 64.58% | 65.96% |
+| `ai/transcriber` | 77.78% | 77.78% |
+| `ai/summarizer` | 76.19% | 76.19% |
+| `webhook/extract` | 74.38% | 75.00% |
+| `gate/payment_link_provider` | 70.42% | 71.43% |
 | `flow/onboarding` | 58.82% | 66.67% |
-| `media/azure_tts` | 40.00% | 70.00% |
-| `scheduler/slot_delivery` | 32.65% | 84.21% |
-| `queue/d1_coalesce_queue` | 22.95% | 66.67% |
-| `dashboard` | 17.67% | 69.49% |
-| `search/hybrid_search` | 18.55% | 52.27% |
-| **Overall** | **47.49%** | **75.30%** |
+| `queue/d1_coalesce_queue` | 20.00% | 66.67% |
+| `ai/openai_assistant` | 64.58% | 65.96% |
+| `search/hybrid_search` | 20.35% | 52.27% |
+| **Overall** | **58.89%** | **79.23%** |
 
 The "covered-only" column is the meaningful one — it scores mutations only inside lines that have test coverage. The overall lags because integration-tested code (D1 SQL methods) isn't run by the unit suite, so Stryker counts it as "no coverage". Surviving mutants are visible in `reports/mutation/index.html`; each is a real test gap. The break threshold is 40% — `npm run test:mutate` fails CI below that. The high (80) and low (60) thresholds are aspirational.
 
 ## Status
 
-`v0.2.0` — opinionated framework upgrade. Three breaking changes from v0.1:
+`v0.3.0` — additive release, no breaking changes from 0.2:
+
+- **AccountLinkStore + `matchLinkCommand`** — short-lived hashed redeem codes that map a web identity (Google sub, push endpoint, anything) to a WhatsApp number. Web side calls `issueCode({...})`; bot side handles `link <code>` via `redeem(...)`. Includes per-isolate sliding-window rate limit and a cleanup sweep for cron.
+- **`withUtm` / `createUtmTagger`** — UTM appender that preserves `#anchor` and existing query strings. Use to tag outbound URLs so GA4 / your analytics correctly attribute the chat channel.
+- **`ReplyEnricher` (Agent option)** — post-LLM hook that runs inside `reply.ai()` on both the long answer and the summary. `LayeredReplyEnricher` composes layers in "first match wins" or "stack" mode. Use for citation footers, CTA links, affiliate suffixes.
+- **`agent.afterReply(...)` + `RateCappedDispatcher`** — opportunistic side-channel sends after each user-facing reply, with daily cap + min-gap + quiet-hours guards. Built on top of `UsageCounter`; no new schema. Ideal for reactive ads, contextual tips, upsell nudges.
+- **`HttpPaymentLinkProvider` + `expandTokens`** — parallel to `HttpTierProvider`; resolves per-user upgrade URLs via your billing service. `expandTokens(body, { '{{subscription_link}}': () => provider.getPaymentLink({...}) })` resolves placeholders lazily inside outbound message text.
+- **`ButtonImageDispatcher`** — generic dispatcher for "user taps button → generate (or cache-fetch) image → send with caption" flows. Renderer-agnostic; supply `encode/decode/cacheKey/render/caption`, get cap enforcement, R2 cache, failure-safe send, and usage recording for free.
+- **`ContentGenerator`** — idempotent self-healing for daily-content tables. Looks up `(date, content)` in your app's table; if missing or below `minUsableLength`, calls a user-supplied `generate(date)` and inserts. `resetColumns` NULLs derived artifacts (e.g. `audio_url`) on update so the next cron re-renders them. Pairs with `Broadcast`.
+
+### v0.2.0
+
+Three breaking changes from v0.1:
 
 - **Drizzle ORM** is the only DB API. Every store (sessions, messages, leads, message_windows, queue, plans, broadcast, slots, usage, preferences, channel_opt_outs) takes `db: DB` (the Drizzle client) — no more `D1Database`. Construct once with `createDb(env.DB)`. Custom queries against app-defined tables (FTS5, etc.) use `db.all(sql\`...\`)` with `sql.raw()` for identifiers.
 - **Zod-validated event stream** writes 9 framework events (`message_inbound`, `opt_in`, `opt_out`, `gate_blocked`, `broadcast_sent`, `plan_day_delivered`, `agent_decision`, `agent_outcome`, `error`) to Cloudflare Analytics Engine via `env.EVENTS`. Auto-emitted from the lifecycle when `Agent` is constructed with `events: { env }`; no-ops if the binding is absent.

@@ -13,3 +13,4 @@ export * from './usage.js';
 export * from './preferences.js';
 export * from './channel_opt_outs.js';
 export * from './blocklist.js';
+export * from './account_links.js';

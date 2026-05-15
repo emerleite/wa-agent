@@ -33,6 +33,8 @@ export { MessageWindow } from './window/message_window.js';
 export { OpenAIAssistant, defaultClean } from './ai/openai_assistant.js';
 export { Summarizer } from './ai/summarizer.js';
 export { Transcriber } from './ai/transcriber.js';
+export { LayeredReplyEnricher, asEnricher } from './ai/reply_enricher.js';
+export type { ReplyEnricher, ReplyEnricherFn, ReplyEnrichContext, LayeredReplyEnricherOptions } from './ai/reply_enricher.js';
 
 // Routers
 export { CommandRouter } from './router/command_router.js';
@@ -45,19 +47,44 @@ export { Broadcast } from './scheduler/broadcast.js';
 export type { BroadcastResult } from './scheduler/broadcast.js';
 export { ReEngagement } from './scheduler/reengagement.js';
 export { SlotDelivery, weightedPick } from './scheduler/slot_delivery.js';
+export { RateCappedDispatcher } from './scheduler/rate_capped_dispatcher.js';
+export type {
+	RateCappedDispatcherOptions,
+	DispatchResult,
+	DispatchReason,
+	SendFn,
+} from './scheduler/rate_capped_dispatcher.js';
 
 // Content
 export { SequentialPlan } from './content/sequential_plan.js';
 export type { AdvanceResult, PlanRow, DayRow, UserPlanRow } from './content/sequential_plan.js';
+export { ContentGenerator } from './content/content_generator.js';
+export type {
+	ContentGeneratorOptions,
+	EnsureResult as ContentEnsureResult,
+	EnsureStatus as ContentEnsureStatus,
+} from './content/content_generator.js';
 
 // Media
 export { R2Cache } from './media/r2_cache.js';
 export { AzureTTS, buildSSML } from './media/azure_tts.js';
+export { ButtonImageDispatcher } from './media/button_image_dispatcher.js';
+export type {
+	ButtonImageDispatcherOptions,
+	DispatchImageResult,
+	DispatchImageReason,
+} from './media/button_image_dispatcher.js';
 
 // Tier gating + access control
 export { TierProvider, HttpTierProvider, StaticTierProvider } from './gate/tier_provider.js';
 export { AccessGate } from './gate/access_gate.js';
 export type { AccessResult, AccessReason } from './gate/access_gate.js';
+export { PaymentLinkProvider, HttpPaymentLinkProvider, expandTokens } from './gate/payment_link_provider.js';
+export type {
+	HttpPaymentLinkProviderOptions,
+	PaymentLinkContext,
+	TokenResolver,
+} from './gate/payment_link_provider.js';
 
 // Composed flows
 export { OnboardingFlow } from './flow/onboarding.js';
@@ -101,6 +128,16 @@ export { Blocklist } from './security/blocklist.js';
 export type { BlocklistOptions, BlockArgs, ListBlockedOptions } from './security/blocklist.js';
 export type { BlockedNumberRow } from './db/schema/blocklist.js';
 
+// Account linking — short-lived web-issued codes → identity ⇄ whatsapp mapping
+export { AccountLinkStore, matchLinkCommand } from './link/account_link_store.js';
+export type {
+	AccountLinkStoreOptions,
+	IssueCodeArgs,
+	RedeemReason,
+	RedeemResult,
+} from './link/account_link_store.js';
+export type { AccountLinkRow, AccountLinkCodeRow } from './db/schema/account_links.js';
+
 // Agent pipeline (v0.2+) — intent → policy → LLM → audit
 export { AgentPipeline, LLMIntentClassifier, PolicyGate, LLMResponder, AuditEmitter, defaultPipeline, emptyDecision } from './pipeline/index.js';
 export type {
@@ -142,6 +179,8 @@ export type { Emit, EventsBindings, EmitOptions, FrameworkEvent, FrameworkEventT
 export { whatsappBold, stripMarkdown, chunkText, INTERACTIVE_BODY_MAX, TEXT_BODY_MAX } from './util/text.js';
 export { QuietHours } from './util/quiet_hours.js';
 export type { QuietHoursOptions } from './util/quiet_hours.js';
+export { withUtm, createUtmTagger } from './util/utm.js';
+export type { UtmParams, UtmTagger, UtmTaggerDefaults } from './util/utm.js';
 
 // Shared types
 export type {

@@ -35,4 +35,43 @@ describe('Transcriber', () => {
 		const stream = new ReadableStream({ start: (c) => c.close() });
 		await expect(t.transcribe(stream)).resolves.toBeNull();
 	});
+
+	it('returns the transcribed text on success', async () => {
+		const client = makeClient('hello there');
+		const t = new Transcriber({ client: client as never });
+		const stream = new ReadableStream({ start: (c) => c.close() });
+		expect(await t.transcribe(stream)).toBe('hello there');
+	});
+
+	it('forwards the configured model to the API call', async () => {
+		const client = makeClient('x');
+		const t = new Transcriber({ client: client as never, model: 'whisper-large-v3' });
+		const stream = new ReadableStream({ start: (c) => c.close() });
+		await t.transcribe(stream);
+		const calls = client._create.mock.calls as unknown as Array<[{ model: string; file: unknown }]>;
+		expect(calls[0]?.[0]?.model).toBe('whisper-large-v3');
+	});
+
+	it('defaults to whisper-1 model when none configured', async () => {
+		const client = makeClient('x');
+		const t = new Transcriber({ client: client as never });
+		const stream = new ReadableStream({ start: (c) => c.close() });
+		await t.transcribe(stream);
+		const calls = client._create.mock.calls as unknown as Array<[{ model: string }]>;
+		expect(calls[0]?.[0]?.model).toBe('whisper-1');
+	});
+
+	it('returns null when API returns empty-string text (treats falsy as missing)', async () => {
+		const client = makeClient('');
+		const t = new Transcriber({ client: client as never });
+		const stream = new ReadableStream({ start: (c) => c.close() });
+		expect(await t.transcribe(stream)).toBeNull();
+	});
+
+	it('does not call the API when audioStream is null', async () => {
+		const client = makeClient('x');
+		const t = new Transcriber({ client: client as never });
+		await t.transcribe(null);
+		expect(client._create).not.toHaveBeenCalled();
+	});
 });
