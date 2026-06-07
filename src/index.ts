@@ -113,6 +113,8 @@ export type { Card, CardContext } from './dashboard/index.js';
 export { UsageCounter } from './usage/usage_counter.js';
 export type { UsageCounterOptions } from './usage/usage_counter.js';
 export type { FeatureUsageRow } from './db/schema/usage.js';
+export { LLMCostCalculator, computeLLMCost, DEFAULT_PRICE_TABLE } from './usage/llm_cost.js';
+export type { LLMCostArgs, LLMCostResult, LLMCostCalculatorOptions, LLMUsage, ModelPrice, PriceTable } from './usage/llm_cost.js';
 
 // User preferences
 export { PreferenceStore, definePreference } from './preference/preference_store.js';
@@ -127,6 +129,42 @@ export type { ChannelOptOutRow } from './db/schema/channel_opt_outs.js';
 export { Blocklist } from './security/blocklist.js';
 export type { BlocklistOptions, BlockArgs, ListBlockedOptions } from './security/blocklist.js';
 export type { BlockedNumberRow } from './db/schema/blocklist.js';
+
+// Sliding-window rate limit (KV-backed; webhook protection)
+export {
+	RateLimit,
+	KvRateLimitStore,
+	MemoryRateLimitStore,
+	honoRateLimit,
+} from './security/rate_limit.js';
+export type {
+	RateLimitStore,
+	RateLimitResult,
+	RateLimitOptions,
+	KvRateLimitStoreOptions,
+	HonoRateLimitOptions,
+	HonoRateLimitContext,
+} from './security/rate_limit.js';
+
+// Escalation log + pluggable notifier
+export {
+	EscalationStore,
+	NoOpNotifier,
+	HttpNotifier,
+	SlackNotifier,
+} from './escalate/escalation_store.js';
+export type {
+	EscalationNotifier,
+	EscalationStoreOptions,
+	EscalateArgs,
+	ResolveArgs as EscalationResolveArgs,
+	ListEscalationsOptions,
+	EscalationUrgency,
+	EscalationReason,
+	HttpNotifierOptions,
+	SlackNotifierOptions,
+} from './escalate/escalation_store.js';
+export type { EscalationRow } from './db/schema/escalations.js';
 
 // Account linking — short-lived web-issued codes → identity ⇄ whatsapp mapping
 export { AccountLinkStore, matchLinkCommand } from './link/account_link_store.js';
@@ -181,6 +219,8 @@ export { QuietHours } from './util/quiet_hours.js';
 export type { QuietHoursOptions } from './util/quiet_hours.js';
 export { withUtm, createUtmTagger } from './util/utm.js';
 export type { UtmParams, UtmTagger, UtmTaggerDefaults } from './util/utm.js';
+export { signJwt, verifyJwt, decodeJwtUnsafe, createJwtSigner } from './util/jwt.js';
+export type { JwtSigner, JwtClaims } from './util/jwt.js';
 
 // Shared types
 export type {

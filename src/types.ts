@@ -59,6 +59,13 @@ export interface RawMessage {
 	button?: { payload?: string; text?: string };
 	location?: { latitude: number; longitude: number };
 	referral?: InboundReferral;
+	/**
+	 * Set by Meta when the user used the "reply to message" UI. `id` is the
+	 * wamid of the message they replied to; `from` is the original sender's
+	 * E.164 number (typically the bot's own number when they replied to a
+	 * bot message).
+	 */
+	context?: { id?: string; from?: string };
 }
 
 export interface InboundMessageBase {
@@ -70,6 +77,13 @@ export interface InboundMessageBase {
 	raw: RawMessage;
 	referral?: InboundReferral;
 	fromAd?: boolean;
+	/**
+	 * wamid of the message this one is a reply-to. Populated when the user
+	 * tapped Meta's "reply to message" UI. Lets handlers tie a correction or
+	 * follow-up to a specific earlier bot reply — e.g. "the meal you logged
+	 * 10 minutes ago had too much rice" → look up by `MessageLog.byWamid(...)`.
+	 */
+	inReplyToWamid?: string;
 	/** All optional content fields below — populate only the ones that match `type`. */
 	type: string;
 	text?: string;

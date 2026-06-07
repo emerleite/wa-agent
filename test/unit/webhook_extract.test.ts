@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { extractInbound } from '../../src/webhook/extract.js';
-import { envelope, textMessage, buttonReplyMessage, audioMessage, adReferralMessage, statusEnvelope } from '../fixtures/webhooks.js';
+import { envelope, textMessage, buttonReplyMessage, audioMessage, adReferralMessage, statusEnvelope, textReplyMessage } from '../fixtures/webhooks.js';
 
 describe('extractInbound', () => {
 	it('returns kind=unknown for empty envelope', () => {
@@ -220,6 +220,26 @@ describe('extractInbound', () => {
 		const r = extractInbound(envelope({ id: 'wamid_a', from: '5551', type: 'audio', audio: {} }));
 		if (r.kind !== 'message') throw new Error('expected message');
 		expect((r as { audioId?: string }).audioId).toBeUndefined();
+	});
+
+	it('populates inReplyToWamid when the message uses Meta reply-to context', () => {
+		const r = extractInbound(envelope(textReplyMessage('correction text', 'wamid_prev_42')));
+		if (r.kind !== 'message') throw new Error('expected message');
+		expect(r.inReplyToWamid).toBe('wamid_prev_42');
+	});
+
+	it('leaves inReplyToWamid undefined when there is no context', () => {
+		const r = extractInbound(envelope(textMessage('plain hello')));
+		if (r.kind !== 'message') throw new Error('expected message');
+		expect((r as { inReplyToWamid?: string }).inReplyToWamid).toBeUndefined();
+	});
+
+	it('ignores an empty context.id', () => {
+		const r = extractInbound(
+			envelope({ id: 'wamid_x', from: '5551', type: 'text', text: { body: 'hi' }, context: { id: '' } }),
+		);
+		if (r.kind !== 'message') throw new Error('expected message');
+		expect((r as { inReplyToWamid?: string }).inReplyToWamid).toBeUndefined();
 	});
 
 	it('button_reply without title sets buttonId only', () => {

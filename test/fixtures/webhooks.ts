@@ -57,6 +57,22 @@ export function adReferralMessage(text: string, ctwaClid: string, id = `wamid_${
 	};
 }
 
+export function textReplyMessage(
+	text: string,
+	inReplyTo: string,
+	id = `wamid_${Math.random().toString(36).slice(2)}`,
+	from = '15551234567',
+): RawMessage {
+	return {
+		id,
+		from,
+		timestamp: '1730000000',
+		type: 'text',
+		text: { body: text },
+		context: { id: inReplyTo, from: '15550009999' },
+	};
+}
+
 export function statusEnvelope(status: string): InboundEnvelope {
 	return {
 		entry: [

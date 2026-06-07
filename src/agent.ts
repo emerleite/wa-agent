@@ -20,6 +20,7 @@ import type { AgentPipeline } from './pipeline/pipeline.js';
 import type { PipelineContext } from './pipeline/types.js';
 import type { Blocklist } from './security/blocklist.js';
 import { asEnricher, type ReplyEnricher, type ReplyEnricherFn } from './ai/reply_enricher.js';
+import type { EscalationStore, EscalationUrgency } from './escalate/escalation_store.js';
 import type { AIClient, ButtonsPayload, CtaUrlPayload, HandlerContext, ReplyHelper, SummarizerLike, InboundEnvelope, InboundMessage } from './types.js';
 
 export interface AgentOptions {
@@ -77,6 +78,18 @@ export interface AgentOptions {
 	 * for inline cases (no class needed).
 	 */
 	replyEnricher?: ReplyEnricher | ReplyEnricherFn | null;
+	/**
+	 * Persist + (optionally) fan out escalations from the pipeline. When a
+	 * pipeline decision has `action: 'escalate'` and this is set, the Agent
+	 * records the escalation in D1 before sending the (possibly null) reply.
+	 * Manual `escalationStore.record({...})` calls from handlers also work.
+	 */
+	escalationStore?: EscalationStore | null;
+	/**
+	 * Default urgency when the pipeline doesn't supply one. Default 'medium'.
+	 * Override per-app for noisier (low) or pre-escalated (high) defaults.
+	 */
+	escalationDefaultUrgency?: EscalationUrgency;
 }
 
 type Lifecycle = 'onFirstContact' | 'onMessage' | 'afterReply' | 'onError';
@@ -107,6 +120,8 @@ export class Agent {
 	readonly tenantId: string | null;
 	readonly blocklist: Blocklist | null;
 	readonly replyEnricher: ReplyEnricher | null;
+	readonly escalationStore: EscalationStore | null;
+	readonly escalationDefaultUrgency: EscalationUrgency;
 	readonly _lifecycleHooks: Record<Lifecycle, Array<(payload: unknown) => void | Promise<void>>> = {
 		onFirstContact: [],
 		onMessage: [],
@@ -134,6 +149,8 @@ export class Agent {
 			tenantId = null,
 			blocklist = null,
 			replyEnricher = null,
+			escalationStore = null,
+			escalationDefaultUrgency = 'medium',
 		} = opts;
 
 		if (!whatsapp?.endpoint || !whatsapp?.token) {
@@ -156,6 +173,8 @@ export class Agent {
 		this.tenantId = tenantId;
 		this.blocklist = blocklist;
 		this.replyEnricher = replyEnricher ? asEnricher(replyEnricher) : null;
+		this.escalationStore = escalationStore;
+		this.escalationDefaultUrgency = escalationDefaultUrgency;
 
 		this.queue = new D1CoalesceQueue({ db: this.db, ...queue });
 		this.session = stores.session ?? new SessionStore({ db: this.db });
@@ -379,6 +398,28 @@ export class Agent {
 						const decision = await self.pipeline.run(pipeCtx);
 						if (typeof decision.reason === 'string' && decision.reason.startsWith('step_error:')) {
 							outcome = 'error';
+						}
+						if (decision.action === 'escalate' && self.escalationStore) {
+							// Auto-record the escalation before returning. The reason carries
+							// the policy predicate's tag (e.g. 'crisis_regex'); message
+							// defaults to the user's text. Urgency comes from the decision
+							// when present, else the Agent's default.
+							const escalation = (decision as { escalation?: { reason?: string; urgency?: EscalationUrgency; message?: string } }).escalation ?? {};
+							const reason = escalation.reason ?? (typeof decision.reason === 'string' ? decision.reason : 'pipeline_escalate');
+							const urgency = escalation.urgency ?? self.escalationDefaultUrgency;
+							const message = escalation.message ?? text.slice(0, 1000);
+							try {
+								await self.escalationStore.record({
+									whatsapp,
+									reason,
+									urgency,
+									message,
+									traceId: pipeCtx.traceId,
+									tenantId: self.tenantId,
+								});
+							} catch (e) {
+								console.error('[Agent] escalationStore.record threw:', e instanceof Error ? e.message : e);
+							}
 						}
 						if (decision.action !== 'reply' || !decision.reply) {
 							// Policy/intent short-circuited (silent or escalate). Caller may

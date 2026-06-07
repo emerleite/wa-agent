@@ -32,6 +32,7 @@ export function extractInbound(envelope: InboundEnvelope | undefined | null): In
 		base.referral = m.referral;
 		base.fromAd = true;
 	}
+	if (m.context?.id) base.inReplyToWamid = m.context.id;
 
 	switch (m.type) {
 		case 'text':

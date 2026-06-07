@@ -834,6 +834,18 @@ The framework was extracted from a production bot ([bibliafala](https://bibliafa
 | `verse_images/handler.js` + `usage.js` (button → cap → R2 cache → send) | `ButtonImageDispatcher` (renderer-agnostic; supply `encode/decode/render/caption/cacheKey`) |
 | `devotional/content_generator.js` (idempotent daily-content table self-heal via LLM) | `ContentGenerator` (table-agnostic; supply `generate(date) => string`, `resetColumns` for derived artifacts) |
 
+### Extracted from sister projects (v0.4)
+
+The framework also absorbs patterns from `aysu` (WhatsApp nutrition agent) and `psico` (chief-of-staff for psychologists), both production users of `wa-agent` itself.
+
+| source | wa-agent equivalent |
+|---|---|
+| `aysu/util/jwt.ts` (HS256 sign/verify for PIX-renewal URL tokens) | `signJwt` / `verifyJwt` / `decodeJwtUnsafe` / `createJwtSigner` (generic over claims type) |
+| `aysu/handlers/text.ts` (uses `inbound.raw.context.id` to tie corrections to a previous meal) | `InboundMessage.inReplyToWamid` surfaced by `extractInbound` |
+| `psico/middleware/rate-limit.ts` (KV sliding-window for webhook protection) | `RateLimit` + `KvRateLimitStore` + `honoRateLimit` |
+| `psico/agent/escalate.ts` (D1-logged escalations + optional Web Push) | `EscalationStore` + pluggable `EscalationNotifier` (HTTP / Slack / NoOp); pipeline `action: 'escalate'` auto-records |
+| `psico/agent/loop.ts` `computeCostBrl` + `PRICE_TABLE` (USD→BRL per-turn LLM cost) | `LLMCostCalculator` + `DEFAULT_PRICE_TABLE` + `withPrice()` for overrides |
+
 ### Deliberately NOT extracted — domain-specific
 
 | bibliafala source | Why it stays in the app |
@@ -918,16 +930,19 @@ Run takes ~18s. Current scores (`reports/mutation/index.html` after a run):
 | Module | Mutation score | Covered-only |
 |---|---|---|
 | `router/command_router` | 95.83% | 100% |
+| `security/rate_limit` | 93.69% | 93.69% |
 | `scheduler/rate_capped_dispatcher` | 79.57% | 92.50% |
 | `webhook/verify` | 90.74% | 92.45% |
 | `media/azure_tts` | 91.43% | 91.43% |
 | `util/utm` | 86.67% | 86.67% |
 | `media/r2_cache` | 86.96% | 86.96% |
 | `gate/access_gate` | 84.62% | 86.84% |
+| `usage/llm_cost` | 85.54% | 85.54% |
 | `ai/reply_enricher` | 83.33% | 83.33% |
 | `router/button_router` | 78.57% | 81.48% |
 | `scheduler/slot_delivery` | 32.65% | 84.21% |
 | `media/button_image_dispatcher` | 73.08% | 80.51% |
+| `util/jwt` | 78.26% | 80.00% |
 | `dashboard` | 20.16% | 80.00% |
 | `gate/tier_provider` | 79.63% | 79.63% |
 | `util/text` | 79.31% | 79.31% |
@@ -935,19 +950,27 @@ Run takes ~18s. Current scores (`reports/mutation/index.html` after a run):
 | `flow/upsell` | 75.34% | 78.57% |
 | `ai/transcriber` | 77.78% | 77.78% |
 | `ai/summarizer` | 76.19% | 76.19% |
-| `webhook/extract` | 74.38% | 75.00% |
+| `webhook/extract` | 75.00% | 75.61% |
 | `gate/payment_link_provider` | 70.42% | 71.43% |
 | `flow/onboarding` | 58.82% | 66.67% |
 | `queue/d1_coalesce_queue` | 20.00% | 66.67% |
 | `ai/openai_assistant` | 64.58% | 65.96% |
 | `search/hybrid_search` | 20.35% | 52.27% |
-| **Overall** | **58.89%** | **79.23%** |
+| **Overall** | **62.91%** | **80.64%** |
 
 The "covered-only" column is the meaningful one — it scores mutations only inside lines that have test coverage. The overall lags because integration-tested code (D1 SQL methods) isn't run by the unit suite, so Stryker counts it as "no coverage". Surviving mutants are visible in `reports/mutation/index.html`; each is a real test gap. The break threshold is 40% — `npm run test:mutate` fails CI below that. The high (80) and low (60) thresholds are aspirational.
 
 ## Status
 
-`v0.3.0` — additive release, no breaking changes from 0.2:
+`v0.4.0` — additive release, no breaking changes from 0.3:
+
+- **`RateLimit` + `KvRateLimitStore` / `MemoryRateLimitStore` + `honoRateLimit`** — KV-backed sliding-window rate limit for webhook protection. Fail-open on store errors (matches `Blocklist`). Hono middleware out of the box; override `keyFn` / `onReject` for non-default needs.
+- **`EscalationStore` + `EscalationNotifier`** — structured "send this turn to a human" log. New schema `escalations`. Notifiers ship: `NoOpNotifier`, `HttpNotifier`, `SlackNotifier`. When `Agent` is constructed with `escalationStore`, pipeline decisions with `action: 'escalate'` are automatically recorded with the user's text + the policy predicate's reason + trace correlation. `notifyAtOrAbove` threshold gates the fan-out.
+- **`createJwtSigner` / `signJwt` / `verifyJwt` / `decodeJwtUnsafe`** — minimal HS256 Web Crypto wrapper for tokens embedded in WhatsApp URL buttons (renewals, magic links, opt-in confirmations). Constant-time signature compare. Generic over claims type.
+- **`LLMCostCalculator` + `computeLLMCost` + `DEFAULT_PRICE_TABLE`** — convert `(model, usage)` to a monetary cost with optional FX conversion. Ships with current OpenAI + Anthropic price aliases; `withPrice(...)` for overrides. Useful for per-user budget caps + analytics-engine cost-per-turn metrics.
+- **`inReplyToWamid` on `InboundMessage`** — webhook extractor now surfaces Meta's `context.id` (set when the user uses the "reply to message" UI). Lets handlers tie a follow-up to a specific previous bot reply via `MessageLog.byWamid(ctx.inbound.inReplyToWamid)`.
+
+### v0.3.0 — additive release, no breaking changes from 0.2:
 
 - **AccountLinkStore + `matchLinkCommand`** — short-lived hashed redeem codes that map a web identity (Google sub, push endpoint, anything) to a WhatsApp number. Web side calls `issueCode({...})`; bot side handles `link <code>` via `redeem(...)`. Includes per-isolate sliding-window rate limit and a cleanup sweep for cron.
 - **`withUtm` / `createUtmTagger`** — UTM appender that preserves `#anchor` and existing query strings. Use to tag outbound URLs so GA4 / your analytics correctly attribute the chat channel.
