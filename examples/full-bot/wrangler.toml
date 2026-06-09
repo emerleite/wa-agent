@@ -12,6 +12,11 @@ database_id = "REPLACE_WITH_YOUR_D1_ID"
 binding = "TTS_BUCKET"
 bucket_name = "full-bot-tts"
 
+# Used by the inbound-webhook rate limiter (KvRateLimitStore).
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_YOUR_KV_ID"
+
 [vars]
 TTS_PUBLIC_HOST = "https://tts.example.com"
 

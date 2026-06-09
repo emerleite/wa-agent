@@ -26,6 +26,9 @@ import {
 	AuditEmitter,
 	LayeredReplyEnricher,
 	createUtmTagger,
+	honoRateLimit,
+	KvRateLimitStore,
+	RateLimit,
 } from 'wa-agent';
 
 const tagWa = createUtmTagger({ source: 'whatsapp' });
@@ -111,11 +114,38 @@ function init(env) {
 		await leads.optOut(user.whatsapp);
 		await reply.text('You have been opted out.');
 	});
-	agent.onText(async ({ text, user, reply }) => {
+	agent.onText(async ({ text, user, reply, inbound, log }) => {
 		await reply.markRead();
 		const session = await agent.session.get(user.whatsapp);
-		await reply.ai(text, { threadId: session?.threadId });
+
+		// `inReplyToWamid` is set when the user used WhatsApp's "reply to
+		// message" UI on a previous bot reply. Use it to feed the prior
+		// answer back as additional context for clarification turns.
+		let prompt = text;
+		if (inbound.inReplyToWamid) {
+			const prev = await log.byWamid(inbound.inReplyToWamid);
+			if (prev?.response) {
+				prompt = `[The user is replying to my earlier message:\n"${prev.response.slice(0, 400)}"]\n\nUser: ${text}`;
+			}
+		}
+
+		await reply.ai(prompt, { threadId: session?.threadId });
 	});
+
+	// Rate-limit the inbound webhook BEFORE the agent's signature check.
+	// 60 hits / minute per IP × path is generous for a single tenant; tune
+	// per traffic shape. Fail-open on KV outage matches the framework
+	// `Blocklist` policy.
+	app.use(
+		'/wa/webhook',
+		honoRateLimit(
+			new RateLimit({
+				store: new KvRateLimitStore({ kv: env.KV, prefix: 'rl:support-webhook' }),
+				windowSeconds: 60,
+				max: 60,
+			}),
+		),
+	);
 
 	mountWebhook(agent, app);
 }

@@ -9,6 +9,8 @@ Focused wa-agent example for AI-driven support. About 130 lines. Sits between `e
 - **Tier gate** — `HttpTierProvider` + `AccessGate` flagging free users with `freeMessageLimit: 0`. The pipeline's `PolicyGate` short-circuits them before the LLM call so non-paid traffic costs nothing.
 - **ReplyEnricher** — `LayeredReplyEnricher` appends a UTM-tagged "More help" CTA to every AI answer. Idempotent: re-runs and forwarded messages don't double-tag.
 - **Analytics Engine** — `events: { env }` emits typed framework events (one of `message_inbound`, `agent_decision`, `agent_outcome`, `error`, etc.) per turn. `AuditEmitter` is re-bound after Agent construction so pipeline events flow through the same dataset.
+- **Rate limit on the webhook** (v0.4) — `app.use('/wa/webhook', honoRateLimit(...))` before `mountWebhook`. 60 hits/minute per IP, KV-backed sliding window, fail-open on store errors. Stops cheap floods before the signature-verification path.
+- **`inReplyToWamid` context** (v0.4) — when the user uses WhatsApp's "reply to message" UI, the previous bot answer is pulled from `MessageLog.byWamid(...)` and prepended to the prompt as clarification context.
 
 Deliberately omitted: cron jobs, broadcasts, plans, image generation, transcription. See [`../full-bot/`](../full-bot) when you need them.
 
@@ -21,7 +23,11 @@ wrangler d1 create support-bot
 # 2. Apply the wa-agent framework migrations
 wrangler d1 migrations apply support-bot --migrations-dir ../../migrations
 
-# 3. Secrets
+# 3. Create the KV namespace for the webhook rate limiter
+wrangler kv namespace create support-bot-rl
+# → copy the printed id into wrangler.toml's [[kv_namespaces]] block
+
+# 4. Secrets
 wrangler secret put META_WA_TOKEN
 wrangler secret put META_WH_TOKEN
 wrangler secret put META_APP_SECRET
@@ -57,7 +63,8 @@ wrangler deploy
 - `src/index.js:52-72` — Pipeline construction. Custom intent enum, one custom policy predicate (the phone-number escalator).
 - `src/index.js:74-82` — `LayeredReplyEnricher` building the tagged CTA. Note the idempotency check on `utm_source=whatsapp`.
 - `src/index.js:83-105` — Agent wiring. `replyEnricher` is the new-in-0.3 option; everything else maps to v0.2.
-- `src/index.js:107-118` — Commands + fallback. The fallback just calls `reply.ai(...)` — the pipeline does the rest.
+- `src/index.js:107-134` — Commands + fallback. The fallback enriches the prompt with the previous answer when `inReplyToWamid` is set, then calls `reply.ai(...)`.
+- `src/index.js:136-150` — Webhook rate limit. Registered as Hono middleware on `/wa/webhook` BEFORE `mountWebhook`, so it runs before the signature check.
 
 ## Customize
 

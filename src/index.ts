@@ -35,6 +35,8 @@ export { Summarizer } from './ai/summarizer.js';
 export { Transcriber } from './ai/transcriber.js';
 export { LayeredReplyEnricher, asEnricher } from './ai/reply_enricher.js';
 export type { ReplyEnricher, ReplyEnricherFn, ReplyEnrichContext, LayeredReplyEnricherOptions } from './ai/reply_enricher.js';
+export { HeuristicFallbackClassifier, heuristicFallback } from './ai/heuristic_fallback_classifier.js';
+export type { HeuristicFallbackClassifierOptions, HeuristicFn } from './ai/heuristic_fallback_classifier.js';
 
 // Routers
 export { CommandRouter } from './router/command_router.js';
@@ -165,6 +167,8 @@ export type {
 	SlackNotifierOptions,
 } from './escalate/escalation_store.js';
 export type { EscalationRow } from './db/schema/escalations.js';
+export { DEFAULT_ESCALATION_COLUMNS } from './escalate/escalation_store.js';
+export type { EscalationField } from './escalate/escalation_store.js';
 
 // Account linking — short-lived web-issued codes → identity ⇄ whatsapp mapping
 export { AccountLinkStore, matchLinkCommand } from './link/account_link_store.js';
@@ -221,11 +225,16 @@ export { withUtm, createUtmTagger } from './util/utm.js';
 export type { UtmParams, UtmTagger, UtmTaggerDefaults } from './util/utm.js';
 export { signJwt, verifyJwt, decodeJwtUnsafe, createJwtSigner } from './util/jwt.js';
 export type { JwtSigner, JwtClaims } from './util/jwt.js';
+export { normalizeIdentifier } from './util/normalize_identifier.js';
+export type { NormalizeIdentifierOptions } from './util/normalize_identifier.js';
+export { computeHoldout } from './util/holdout.js';
+export type { ComputeHoldoutArgs } from './util/holdout.js';
 
 // Shared types
 export type {
 	Tier,
 	WindowType,
+	AgentMode,
 	TierResult,
 	InboundEvent,
 	InboundMessage,

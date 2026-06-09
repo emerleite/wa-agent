@@ -33,7 +33,10 @@
 		"src/scheduler/rate_capped_dispatcher.ts",
 		"src/util/jwt.ts",
 		"src/usage/llm_cost.ts",
-		"src/security/rate_limit.ts"
+		"src/security/rate_limit.ts",
+		"src/util/normalize_identifier.ts",
+		"src/util/holdout.ts",
+		"src/ai/heuristic_fallback_classifier.ts"
 	],
 	"thresholds": {
 		"high": 80,

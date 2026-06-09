@@ -25,9 +25,9 @@
  * `resolve(id, { resolvedBy, notes })` closes the row; `list({ activeOnly })`
  * surfaces open ones for dashboards.
  */
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import type { DB } from '../db/client.js';
-import { escalations, type EscalationRow } from '../db/schema/escalations.js';
+import type { EscalationRow } from '../db/schema/escalations.js';
 
 export type EscalationUrgency = 'low' | 'medium' | 'high' | 'critical';
 export type EscalationReason =
@@ -65,6 +65,42 @@ export interface EscalationNotifier {
 	notify(escalation: EscalationRow): Promise<void>;
 }
 
+/**
+ * Logical column names on the row shape (`EscalationRow`). Used by
+ * `columnMap` to point each one at a different physical column name when
+ * an app already has its own table.
+ */
+export type EscalationField =
+	| 'id'
+	| 'whatsapp'
+	| 'reason'
+	| 'urgency'
+	| 'message'
+	| 'traceId'
+	| 'tenantId'
+	| 'createdAt'
+	| 'resolvedAt'
+	| 'resolvedBy'
+	| 'notes';
+
+/**
+ * Default column names — mirror `migrations/013_escalations.sql`. Override
+ * via `EscalationStoreOptions.columnMap` to retarget an app-owned table.
+ */
+export const DEFAULT_ESCALATION_COLUMNS: Readonly<Record<EscalationField, string>> = Object.freeze({
+	id: 'id',
+	whatsapp: 'whatsapp',
+	reason: 'reason',
+	urgency: 'urgency',
+	message: 'message',
+	traceId: 'trace_id',
+	tenantId: 'tenant_id',
+	createdAt: 'created_at',
+	resolvedAt: 'resolved_at',
+	resolvedBy: 'resolved_by',
+	notes: 'notes',
+});
+
 export interface EscalationStoreOptions {
 	db: DB;
 	/** Optional sink for newly-recorded escalations. Default: NoOpNotifier. */
@@ -74,6 +110,26 @@ export interface EscalationStoreOptions {
 	 * touched. Default 'medium' — `low` escalations are recorded silently.
 	 */
 	notifyAtOrAbove?: EscalationUrgency;
+	/**
+	 * Physical table name. Default `'escalations'`. Override when the app
+	 * already owns the schema and you want the store to write to that.
+	 *
+	 * Must be a bare SQL identifier (alphanumeric + underscores). Rejected
+	 * at construction; this is the same defence-in-depth `ContentGenerator`
+	 * uses.
+	 */
+	tableName?: string;
+	/**
+	 * Per-field column-name override. Pass only the fields whose physical
+	 * column differs from the default; the rest fall through to
+	 * `DEFAULT_ESCALATION_COLUMNS`.
+	 *
+	 *   columnMap: { notes: 'resolution' }
+	 *     // psico's column is `resolution` instead of `notes`.
+	 *
+	 * Like `tableName`, each value must be a bare SQL identifier.
+	 */
+	columnMap?: Partial<Record<EscalationField, string>>;
 }
 
 const URGENCY_RANK: Record<EscalationUrgency, number> = {
@@ -83,16 +139,41 @@ const URGENCY_RANK: Record<EscalationUrgency, number> = {
 	critical: 3,
 };
 
+const SAFE_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 export class EscalationStore {
 	readonly db: DB;
 	readonly notifier: EscalationNotifier;
 	readonly notifyAtOrAbove: EscalationUrgency;
+	readonly tableName: string;
+	readonly columns: Readonly<Record<EscalationField, string>>;
 
-	constructor({ db, notifier = null, notifyAtOrAbove = 'medium' }: EscalationStoreOptions) {
+	constructor({
+		db,
+		notifier = null,
+		notifyAtOrAbove = 'medium',
+		tableName = 'escalations',
+		columnMap,
+	}: EscalationStoreOptions) {
 		if (!db) throw new Error('EscalationStore: db required');
+		if (!SAFE_IDENT.test(tableName)) {
+			throw new Error('EscalationStore: tableName must be a bare SQL identifier');
+		}
+		const merged: Record<EscalationField, string> = { ...DEFAULT_ESCALATION_COLUMNS };
+		if (columnMap) {
+			for (const [k, v] of Object.entries(columnMap) as Array<[EscalationField, string | undefined]>) {
+				if (v === undefined) continue;
+				if (!SAFE_IDENT.test(v)) {
+					throw new Error(`EscalationStore: columnMap.${k} must be a bare SQL identifier`);
+				}
+				merged[k] = v;
+			}
+		}
 		this.db = db;
 		this.notifier = notifier ?? new NoOpNotifier();
 		this.notifyAtOrAbove = notifyAtOrAbove;
+		this.tableName = tableName;
+		this.columns = Object.freeze(merged);
 	}
 
 	/**
@@ -106,15 +187,19 @@ export class EscalationStore {
 		if (!args.message) throw new Error('EscalationStore.record: message required');
 
 		const id = crypto.randomUUID();
-		await this.db.insert(escalations).values({
-			id,
-			whatsapp: args.whatsapp,
-			reason: args.reason,
-			urgency: args.urgency,
-			message: args.message,
-			traceId: args.traceId ?? null,
-			tenantId: args.tenantId ?? null,
-		});
+		const c = this.columns;
+		const t = sql.raw(this.tableName);
+		const stmt = sql`
+			INSERT INTO ${t} (
+				${sql.raw(c.id)}, ${sql.raw(c.whatsapp)}, ${sql.raw(c.reason)},
+				${sql.raw(c.urgency)}, ${sql.raw(c.message)}, ${sql.raw(c.traceId)},
+				${sql.raw(c.tenantId)}
+			) VALUES (
+				${id}, ${args.whatsapp}, ${args.reason},
+				${args.urgency}, ${args.message}, ${args.traceId ?? null},
+				${args.tenantId ?? null}
+			)`;
+		await this.db.run(stmt);
 
 		if (URGENCY_RANK[args.urgency] >= URGENCY_RANK[this.notifyAtOrAbove]) {
 			try {
@@ -129,46 +214,79 @@ export class EscalationStore {
 	}
 
 	async byId(id: string): Promise<EscalationRow | null> {
-		const rows = await this.db.select().from(escalations).where(eq(escalations.id, id)).limit(1);
+		const stmt = sql`
+			SELECT ${this.selectList()} FROM ${sql.raw(this.tableName)}
+			WHERE ${sql.raw(this.columns.id)} = ${id} LIMIT 1`;
+		const rows = await this.db.all<EscalationRow>(stmt);
 		return rows[0] ?? null;
 	}
 
 	async resolve(id: string, args: ResolveArgs = {}): Promise<boolean> {
-		const r = await this.db
-			.update(escalations)
-			.set({
-				resolvedAt: sql`(datetime('now'))`,
-				resolvedBy: args.resolvedBy ?? null,
-				notes: args.notes ?? null,
-			})
-			.where(and(eq(escalations.id, id), isNull(escalations.resolvedAt)))
-			.returning({ id: escalations.id });
-		return r.length > 0;
+		const c = this.columns;
+		const stmt = sql`
+			UPDATE ${sql.raw(this.tableName)}
+			SET ${sql.raw(c.resolvedAt)} = (datetime('now')),
+			    ${sql.raw(c.resolvedBy)} = ${args.resolvedBy ?? null},
+			    ${sql.raw(c.notes)} = ${args.notes ?? null}
+			WHERE ${sql.raw(c.id)} = ${id} AND ${sql.raw(c.resolvedAt)} IS NULL
+			RETURNING ${sql.raw(c.id)} AS id`;
+		const rows = await this.db.all<{ id: string }>(stmt);
+		return rows.length > 0;
 	}
 
 	async list({ activeOnly = true, urgency, tenantId, whatsapp, limit = 100 }: ListEscalationsOptions = {}): Promise<EscalationRow[]> {
-		const where = and(
-			activeOnly ? isNull(escalations.resolvedAt) : undefined,
-			urgency ? eq(escalations.urgency, urgency) : undefined,
-			tenantId ? eq(escalations.tenantId, tenantId) : undefined,
-			whatsapp ? eq(escalations.whatsapp, whatsapp) : undefined,
-		);
-		return await this.db.select().from(escalations).where(where).orderBy(desc(escalations.createdAt)).limit(limit);
+		const c = this.columns;
+		const filters = [
+			activeOnly ? sql`${sql.raw(c.resolvedAt)} IS NULL` : null,
+			urgency ? sql`${sql.raw(c.urgency)} = ${urgency}` : null,
+			tenantId ? sql`${sql.raw(c.tenantId)} = ${tenantId}` : null,
+			whatsapp ? sql`${sql.raw(c.whatsapp)} = ${whatsapp}` : null,
+		].filter((f): f is ReturnType<typeof sql> => f !== null);
+		const whereClause = filters.length
+			? sql` WHERE ${sql.join(filters, sql` AND `)}`
+			: sql``;
+		const stmt = sql`
+			SELECT ${this.selectList()} FROM ${sql.raw(this.tableName)}${whereClause}
+			ORDER BY ${sql.raw(c.createdAt)} DESC LIMIT ${limit}`;
+		return await this.db.all<EscalationRow>(stmt);
 	}
 
 	/** Number of currently open escalations, optionally filtered by urgency. */
 	async openCount({ urgency, tenantId }: { urgency?: EscalationUrgency; tenantId?: string } = {}): Promise<number> {
-		const rows = await this.db
-			.select({ id: escalations.id })
-			.from(escalations)
-			.where(
-				and(
-					isNull(escalations.resolvedAt),
-					urgency ? eq(escalations.urgency, urgency) : undefined,
-					tenantId ? eq(escalations.tenantId, tenantId) : undefined,
-				),
-			);
-		return rows.length;
+		const c = this.columns;
+		const filters = [
+			sql`${sql.raw(c.resolvedAt)} IS NULL`,
+			urgency ? sql`${sql.raw(c.urgency)} = ${urgency}` : null,
+			tenantId ? sql`${sql.raw(c.tenantId)} = ${tenantId}` : null,
+		].filter((f): f is ReturnType<typeof sql> => f !== null);
+		const stmt = sql`
+			SELECT COUNT(*) AS n FROM ${sql.raw(this.tableName)}
+			WHERE ${sql.join(filters, sql` AND `)}`;
+		const rows = await this.db.all<{ n: number }>(stmt);
+		return rows[0]?.n ?? 0;
+	}
+
+	/**
+	 * Build the SELECT projection that aliases physical columns back to the
+	 * logical `EscalationRow` field names. Lets every caller treat the row
+	 * shape as the same regardless of the column map.
+	 */
+	private selectList(): ReturnType<typeof sql> {
+		const c = this.columns;
+		const fragments = [
+			sql`${sql.raw(c.id)} AS id`,
+			sql`${sql.raw(c.whatsapp)} AS whatsapp`,
+			sql`${sql.raw(c.reason)} AS reason`,
+			sql`${sql.raw(c.urgency)} AS urgency`,
+			sql`${sql.raw(c.message)} AS message`,
+			sql`${sql.raw(c.traceId)} AS "traceId"`,
+			sql`${sql.raw(c.tenantId)} AS "tenantId"`,
+			sql`${sql.raw(c.createdAt)} AS "createdAt"`,
+			sql`${sql.raw(c.resolvedAt)} AS "resolvedAt"`,
+			sql`${sql.raw(c.resolvedBy)} AS "resolvedBy"`,
+			sql`${sql.raw(c.notes)} AS notes`,
+		];
+		return sql.join(fragments, sql`, `);
 	}
 }
 

@@ -60,6 +60,12 @@ import {
 	matchLinkCommand,
 	RateCappedDispatcher,
 	QuietHours,
+	honoRateLimit,
+	KvRateLimitStore,
+	RateLimit,
+	EscalationStore,
+	SlackNotifier,
+	LLMCostCalculator,
 } from 'wa-agent';
 
 // Typed preference for delivery format
@@ -155,6 +161,18 @@ function init(env) {
 		],
 	});
 
+	// Escalation log + optional Slack fan-out. The pipeline's `PolicyGate`
+	// returns `action: 'escalate'` for messages containing a phone number;
+	// the Agent records them automatically (with the policy reason +
+	// traceId) before short-circuiting. urgency='medium' is the default.
+	const escalationStore = new EscalationStore({
+		db: env.DB,
+		notifier: env.SLACK_ESCALATION_WEBHOOK
+			? new SlackNotifier({ webhookUrl: env.SLACK_ESCALATION_WEBHOOK })
+			: null,
+		notifyAtOrAbove: 'medium',
+	});
+
 	agent = new Agent({
 		whatsapp: {
 			endpoint: env.META_WA_ENDPOINT,
@@ -168,6 +186,7 @@ function init(env) {
 		tierProvider,
 		onboarding,
 		replyEnricher,
+		escalationStore,
 		events: { env }, // env.EVENTS Analytics Engine binding (or no-op if absent)
 		pipeline: defaultPipeline({
 			ai: assistant,
@@ -185,6 +204,18 @@ function init(env) {
 	const transcriber = new Transcriber({ client: azure });
 	const usage = new UsageCounter({ db: agent.db });
 	const prefs = new PreferenceStore({ db: agent.db });
+
+	// Per-turn LLM cost calculator. Configured in BRL with a fixed FX rate
+	// (refresh from your accounting source in production). Pairs with
+	// UsageCounter so per-user cost rolls up via the existing analytics
+	// queries — feature='ai_cost_brl', stored as a string under the `key`
+	// column so daily aggregation can sum it.
+	const costCalculator = new LLMCostCalculator({
+		currency: 'BRL',
+		fxRate: 5.5,
+		decimals: 4,
+		fallbackModel: 'gpt-4o-mini',
+	});
 
 	const upsell = new Upsell({
 		client,
@@ -468,6 +499,32 @@ function init(env) {
 			}
 			await slot.recordImpression(u.whatsapp, item.id, 'afternoon');
 		}
+	});
+
+	// Webhook rate limit (v0.4) — 60 hits/minute per IP × path. Registered
+	// BEFORE mountWebhook so it runs before the signature check; cheap
+	// reject for floods that would otherwise cost a DB read per hit.
+	app.use(
+		'/wa/webhook',
+		honoRateLimit(
+			new RateLimit({
+				store: new KvRateLimitStore({ kv: env.KV, prefix: 'rl:full-webhook' }),
+				windowSeconds: 60,
+				max: 60,
+			}),
+		),
+	);
+
+	// Admin cost-estimate endpoint (v0.4) — quick demo of LLMCostCalculator
+	// against an arbitrary model + token counts. In production this would
+	// sit behind basic-auth like the dashboard, and read actual usage from
+	// the LLM SDK callback or a per-tenant ledger.
+	app.get('/admin/cost', (c) => {
+		const model = c.req.query('model') || 'gpt-4o-mini';
+		const input = parseInt(c.req.query('in') || '0', 10);
+		const output = parseInt(c.req.query('out') || '0', 10);
+		const r = costCalculator.compute(model, { inputTokens: input, outputTokens: output });
+		return c.json(r);
 	});
 
 	mountWebhook(agent, app);

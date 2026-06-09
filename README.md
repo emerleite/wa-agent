@@ -845,6 +845,11 @@ The framework also absorbs patterns from `aysu` (WhatsApp nutrition agent) and `
 | `psico/middleware/rate-limit.ts` (KV sliding-window for webhook protection) | `RateLimit` + `KvRateLimitStore` + `honoRateLimit` |
 | `psico/agent/escalate.ts` (D1-logged escalations + optional Web Push) | `EscalationStore` + pluggable `EscalationNotifier` (HTTP / Slack / NoOp); pipeline `action: 'escalate'` auto-records |
 | `psico/agent/loop.ts` `computeCostBrl` + `PRICE_TABLE` (USD→BRL per-turn LLM cost) | `LLMCostCalculator` + `DEFAULT_PRICE_TABLE` + `withPrice()` for overrides |
+| `psico/agent/mode.ts` `isInHoldout` (SHA-256-based deterministic A/B cohort) | `computeHoldout` (+ optional `salt`) — bit-for-bit parity with the original |
+| `psico/agent/mode.ts` `AgentMode` (`shadow`/`assisted`/`operator`/`autonomous`) | `AgentOptions.mode` + `ctx.mode` passthrough; framework gates `client.sendText` in shadow, auto-escalates per turn in assisted |
+| `psico/escalations` table (tenant FK, `resolution` column, NOT NULL constraints) | `EscalationStore.columnMap` + `tableName` (v0.5) — point the store at the app-owned table without losing referential integrity |
+| `aysu/util/category.ts` + `ai/classifier.ts` (two near-identical SCREAMING_SNAKE normalizers) | `normalizeIdentifier` (generic over T, optional `map` for enum resolution) |
+| `aysu/ai/classifier.ts` `TextClassifier` (LLM call + heuristic fallback on error) | `HeuristicFallbackClassifier` + `heuristicFallback` (composes with the existing `LLMIntentClassifier`) |
 
 ### Deliberately NOT extracted — domain-specific
 
@@ -929,11 +934,14 @@ Run takes ~18s. Current scores (`reports/mutation/index.html` after a run):
 
 | Module | Mutation score | Covered-only |
 |---|---|---|
+| `util/holdout` | 100% | 100% |
 | `router/command_router` | 95.83% | 100% |
+| `util/normalize_identifier` | 94.44% | 94.44% |
 | `security/rate_limit` | 93.69% | 93.69% |
 | `scheduler/rate_capped_dispatcher` | 79.57% | 92.50% |
 | `webhook/verify` | 90.74% | 92.45% |
 | `media/azure_tts` | 91.43% | 91.43% |
+| `ai/heuristic_fallback_classifier` | 87.10% | 87.10% |
 | `util/utm` | 86.67% | 86.67% |
 | `media/r2_cache` | 86.96% | 86.96% |
 | `gate/access_gate` | 84.62% | 86.84% |
@@ -956,13 +964,23 @@ Run takes ~18s. Current scores (`reports/mutation/index.html` after a run):
 | `queue/d1_coalesce_queue` | 20.00% | 66.67% |
 | `ai/openai_assistant` | 64.58% | 65.96% |
 | `search/hybrid_search` | 20.35% | 52.27% |
-| **Overall** | **62.91%** | **80.64%** |
+| **Overall** | **64.10%** | **81.25%** |
 
 The "covered-only" column is the meaningful one — it scores mutations only inside lines that have test coverage. The overall lags because integration-tested code (D1 SQL methods) isn't run by the unit suite, so Stryker counts it as "no coverage". Surviving mutants are visible in `reports/mutation/index.html`; each is a real test gap. The break threshold is 40% — `npm run test:mutate` fails CI below that. The high (80) and low (60) thresholds are aspirational.
 
 ## Status
 
-`v0.4.0` — additive release, no breaking changes from 0.3:
+Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
+
+### v0.5.0 — additive release, no breaking changes from 0.4:
+
+- **`normalizeIdentifier`** — strip diacritics → uppercase → collapse separators → drop non-`[A-Z_]` → squash → trim. Optional `map` resolves the normalized form to a known enum value with optional `fallback`. Generic over T. Aysu had two near-identical copies of this pipeline (image categories + text classification); both collapse to one import.
+- **`computeHoldout`** — deterministic SHA-256 → uint32 → mod 100 → strict `<` percentage. Optional `salt` rotates cohorts. Stable assignment for ML A/B tests, gradual rollouts, synthetic canaries. Bit-for-bit compatible with psico's hand-rolled `isInHoldout`.
+- **`HeuristicFallbackClassifier` + `heuristicFallback`** — composes a primary `IntentClassifyFn` with a regex/heuristic fallback. Drop-in for `LLMIntentClassifier`'s `classify` callback. Falls through on throw or null result; `onPrimaryError` for observability. Aysu's `TextClassifier.classify` collapses to `await composed.classify(text)`.
+- **`EscalationStore` schema flexibility** — new `tableName?` and `columnMap?` options. Apps with their own escalations table (psico's `escalations.tenant_id` FK, `resolution` column instead of `notes`) point at it without losing referential integrity. `DEFAULT_ESCALATION_COLUMNS` exported so app code can reference the names without hard-coding. Backward compatible — defaults match `migrations/013_escalations.sql`.
+- **Agent rollout mode (`shadow` / `assisted` / `operator` / `autonomous`)** — new `mode?: AgentMode | ((ctx) => AgentMode)` on `Agent`. `shadow` skips `client.sendText` from `reply.ai()` while still running the pipeline, logging the answer, emitting events. `assisted` sends the answer + auto-records an `assisted_review` escalation per turn for human review. `operator` is a label passed through to handlers via `ctx.mode` so app code can gate side-effecting tool execution. `autonomous` (default) keeps v0.4 behavior. Resolver fails closed to `autonomous` if it throws or returns an unknown value.
+
+### v0.4.0 — additive release, no breaking changes from 0.3:
 
 - **`RateLimit` + `KvRateLimitStore` / `MemoryRateLimitStore` + `honoRateLimit`** — KV-backed sliding-window rate limit for webhook protection. Fail-open on store errors (matches `Blocklist`). Hono middleware out of the box; override `keyFn` / `onReject` for non-default needs.
 - **`EscalationStore` + `EscalationNotifier`** — structured "send this turn to a human" log. New schema `escalations`. Notifiers ship: `NoOpNotifier`, `HttpNotifier`, `SlackNotifier`. When `Agent` is constructed with `escalationStore`, pipeline decisions with `action: 'escalate'` are automatically recorded with the user's text + the policy predicate's reason + trace correlation. `notifyAtOrAbove` threshold gates the fan-out.
@@ -987,8 +1005,6 @@ Three breaking changes from v0.1:
 - **Drizzle ORM** is the only DB API. Every store (sessions, messages, leads, message_windows, queue, plans, broadcast, slots, usage, preferences, channel_opt_outs) takes `db: DB` (the Drizzle client) — no more `D1Database`. Construct once with `createDb(env.DB)`. Custom queries against app-defined tables (FTS5, etc.) use `db.all(sql\`...\`)` with `sql.raw()` for identifiers.
 - **Zod-validated event stream** writes 9 framework events (`message_inbound`, `opt_in`, `opt_out`, `gate_blocked`, `broadcast_sent`, `plan_day_delivered`, `agent_decision`, `agent_outcome`, `error`) to Cloudflare Analytics Engine via `env.EVENTS`. Auto-emitted from the lifecycle when `Agent` is constructed with `events: { env }`; no-ops if the binding is absent.
 - **Composable agent pipeline** (`intent → policy → LLM → audit`) routes `reply.ai()` through named, replaceable steps. Default classifier is SDK-agnostic — wire `generateObject`, OpenAI tool-calling, or a regex via the `classify` callback. Opt in by passing `pipeline: defaultPipeline({...})` to `Agent`. Omit it to keep the v0.1 direct-chat path.
-
-Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
 
 ## License
 

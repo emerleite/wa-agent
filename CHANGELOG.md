@@ -2,6 +2,40 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.5.0] — 2026-06-09
+
+### Added
+
+- **`normalizeIdentifier`** (`src/util/normalize_identifier.ts`) — strip diacritics → uppercase → collapse `\s|-` to `_` → drop non-`[A-Z_]` → squash → trim. Optional `map: Record<string, T>` resolves the normalized form to an enum value; optional `fallback: T` overrides the null default on miss. Generic over T. The function is idempotent (running it on its own output is a no-op). Aysu's `util/category.ts` + `ai/classifier.ts` had two near-identical SCREAMING_SNAKE pipelines; both collapse to one import.
+- **`computeHoldout`** (`src/util/holdout.ts`) — deterministic SHA-256 → first 4 bytes as big-endian uint32 → mod 100 → strict-less-than the (clamped) percentage. Optional `salt` mixes into the input so two experiments over the same population draw independent samples. Non-finite percentages clamp to 0 (never in holdout, safe default). Bit-for-bit parity with psico's hand-rolled `isInHoldout`, verified in-test by reimplementing the original alongside.
+- **`HeuristicFallbackClassifier` + `heuristicFallback`** (`src/ai/heuristic_fallback_classifier.ts`) — composes a primary `IntentClassifyFn` with a sync-or-async fallback that runs when the primary throws or returns null/undefined/missing-intent. `onPrimaryError` hook fires once per failure for observability; its own throws are swallowed so a broken logger can't take the classifier down. If the fallback also fails, returns the first intent with `confidence: 0` so `LLMIntentClassifier`'s normal not-in-intents recovery kicks in. Drop-in for `LLMIntentClassifier({ classify: ... })`.
+- **`EscalationStore` schema flexibility** — new `tableName?: string` and `columnMap?: Partial<Record<EscalationField, string>>` options. Defaults match `migrations/013_escalations.sql` so existing users see no change. Apps with their own escalations table (psico has `tenant_id` NOT NULL + FK to `tenants`, a `patient_id` FK, and `resolution` instead of `notes`) can now point the store at it via `columnMap: { notes: 'resolution' }`. Identifier names are validated at construction with `SAFE_IDENT` — same defence-in-depth `ContentGenerator` uses. `DEFAULT_ESCALATION_COLUMNS` exported as a frozen reference. Implementation switched to raw-SQL with `sql.raw()` for identifiers; the static Drizzle schema is no longer imported by the store (kept only for the row type).
+- **Agent rollout mode (`shadow` / `assisted` / `operator` / `autonomous`)** — new `AgentOptions.mode?: AgentMode | ((ctx: HandlerContext) => AgentMode | Promise<AgentMode>)`. String form sets a fixed mode; function form resolves per-turn (typically against a per-tenant lookup). Resolved mode is stashed on `ctx.mode` for handler use. Framework gating:
+  - `shadow` — `reply.ai()` runs the full pipeline (intent → policy → LLM → audit), enriches the answer, logs it to `MessageLog`, persists the session threadId, emits events — but does NOT call `client.sendText`. For pre-launch validation against real traffic. Handler-issued `reply.text(...)` calls still send (those are the handler's explicit choice).
+  - `assisted` — sends the AI reply AND records an `assisted_review` escalation (urgency `low`) per turn so a human can spot-check. Only fires once per turn (not double-counted on the long-answer summarize path). Silently no-ops when no `escalationStore` is configured.
+  - `operator` — same framework behavior as `autonomous`; `ctx.mode === 'operator'` is the signal app code uses to gate side-effecting tool execution.
+  - `autonomous` — default. Unchanged from v0.4.
+  The resolver fails closed: a throw or unknown return value falls back to `'autonomous'` and logs.
+
+### Changed
+
+- `HandlerContext` gains a required `mode: AgentMode` field. Existing TypeScript callers that destructure `ctx` see no change unless they're constructing a `HandlerContext` literally.
+- `EscalationStore` internals now use raw SQL via `sql.raw()` for table + column identifiers. The static Drizzle schema (`escalations` from `src/db/schema/escalations.ts`) is still exported but no longer required for the store to function.
+- README extended with v0.5 status block + 6 new rows in the "Extracted from sister projects" mapping table.
+
+### Tests
+
+- 618 → **697** tests passing across the unit + integration suites.
+- Stryker mutate set extended with `util/normalize_identifier`, `util/holdout`, `ai/heuristic_fallback_classifier`. All three above the 80% high threshold on covered-only: `holdout` 100%, `normalize_identifier` 94.44%, `heuristic_fallback_classifier` 87.10%. Overall framework mutation score moved from 62.91 / 80.64 (v0.4) to **64.10 / 81.25**.
+
+### Migration notes
+
+No breaking changes. Existing `EscalationStore` constructions keep working — defaults match `DEFAULT_ESCALATION_COLUMNS`.
+
+Agents without `mode` set behave exactly as in v0.4 (autonomous).
+
+If you want psico-style adoption (`isInHoldout = computeHoldout`), the algorithm matches bit-for-bit when `salt` is omitted.
+
 ## [0.4.0] — 2026-06-07
 
 ### Added

@@ -14,6 +14,24 @@ export type Json = string | number | boolean | null | { [k: string]: Json } | Js
 export type Tier = 'free' | 'premium' | 'lifetime' | (string & {});
 export type WindowType = 'free' | 'paid';
 
+/**
+ * Agent rollout stage. Affects whether `reply.ai()` actually sends and
+ * whether each turn is auto-escalated for human review:
+ *
+ *   - `shadow`     — pipeline runs, the answer is logged + events emitted,
+ *                    but the framework never calls `client.sendText`. For
+ *                    pre-launch validation against real traffic without
+ *                    user-visible side effects.
+ *   - `assisted`   — answer is sent + every successful AI turn is recorded
+ *                    in `escalationStore` with urgency `low` and reason
+ *                    `assisted_review`. For first-week safety nets.
+ *   - `operator`   — same framework behavior as `autonomous`; the label is
+ *                    passed through to handlers via `ctx.mode` so app code
+ *                    can gate side-effecting tool execution.
+ *   - `autonomous` — current default. Send everything; no extra audit.
+ */
+export type AgentMode = 'shadow' | 'assisted' | 'operator' | 'autonomous';
+
 export interface InboundReferral {
 	source_url?: string;
 	source_id?: string;
@@ -185,6 +203,13 @@ export interface HandlerContext {
 	gate: import('./gate/access_gate.js').AccessGate | null;
 	isFirstContact: boolean;
 	fromAd: boolean;
+	/**
+	 * Resolved agent rollout stage for this turn. Mirrors `AgentOptions.mode`
+	 * after the (sync or async) resolver runs. App code can read this to
+	 * gate its own tool execution (e.g. skip side-effects in `operator` /
+	 * `shadow`).
+	 */
+	mode: AgentMode;
 	[k: string]: unknown;
 }
 

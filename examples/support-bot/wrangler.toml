@@ -8,6 +8,11 @@ binding = "DB"
 database_name = "support-bot"
 database_id = "REPLACE_WITH_YOUR_D1_ID"
 
+# Used by the inbound-webhook rate limiter (KvRateLimitStore).
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_YOUR_KV_ID"
+
 # Optional: Analytics Engine binding for the typed event stream. Omit to no-op.
 # [[analytics_engine_datasets]]
 # binding = "EVENTS"

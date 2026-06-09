@@ -26,11 +26,14 @@ Every wa-agent primitive in one Worker. About 450 lines. Demonstrates the framew
 | `SlotDelivery` (weighted afternoon slot, deduped) | `src/index.js:459` |
 | `R2Cache` + `AzureTTS` (lazy TTS, cached per-date) | `src/index.js:406` |
 | `RateCappedDispatcher` + `agent.afterReply(...)` (free-tier daily tip) | `src/index.js:217, 386` |
+| `EscalationStore` + optional `SlackNotifier` (auto-records pipeline `escalate` decisions) | `src/index.js:164-172` (construction); pipeline `policy` predicate at `src/index.js:135-141` |
+| `honoRateLimit` + `KvRateLimitStore` on inbound webhook | `src/index.js:504-515` |
+| `LLMCostCalculator` (admin endpoint demonstrates per-(model, tokens) cost) | `src/index.js:213-218` (construction); `src/index.js:520-526` (admin endpoint) |
 
 ## Setup
 
 ```sh
-# 1. D1
+# 1. D1 — includes the v0.4 `escalations` table (migration 013)
 wrangler d1 create full-bot
 wrangler d1 migrations apply full-bot --migrations-dir ../../migrations
 
@@ -38,12 +41,21 @@ wrangler d1 migrations apply full-bot --migrations-dir ../../migrations
 wrangler r2 bucket create full-bot-tts
 # Make it public OR put a custom domain in front and set TTS_PUBLIC_HOST.
 
-# 3. Secrets
+# 3. KV (webhook rate limiter)
+wrangler kv namespace create full-bot-rl
+# → copy the printed id into wrangler.toml's [[kv_namespaces]] block.
+
+# 4. Secrets
 for s in META_WA_TOKEN META_WH_TOKEN META_APP_SECRET \
          AZURE_OPENAI_API_KEY AZURE_SPEECH_KEY \
          BILLING_API_TOKEN; do
   wrangler secret put "$s"
 done
+
+# 5. Optional — set SLACK_ESCALATION_WEBHOOK to fan out escalations to Slack.
+#    Omit it and EscalationStore still records every escalation to D1; the
+#    notifier degrades to a no-op.
+# wrangler secret put SLACK_ESCALATION_WEBHOOK
 ```
 
 ### App-specific tables

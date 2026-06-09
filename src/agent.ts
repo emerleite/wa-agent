@@ -21,7 +21,7 @@ import type { PipelineContext } from './pipeline/types.js';
 import type { Blocklist } from './security/blocklist.js';
 import { asEnricher, type ReplyEnricher, type ReplyEnricherFn } from './ai/reply_enricher.js';
 import type { EscalationStore, EscalationUrgency } from './escalate/escalation_store.js';
-import type { AIClient, ButtonsPayload, CtaUrlPayload, HandlerContext, ReplyHelper, SummarizerLike, InboundEnvelope, InboundMessage } from './types.js';
+import type { AgentMode, AIClient, ButtonsPayload, CtaUrlPayload, HandlerContext, ReplyHelper, SummarizerLike, InboundEnvelope, InboundMessage } from './types.js';
 
 export interface AgentOptions {
 	whatsapp: {
@@ -90,6 +90,18 @@ export interface AgentOptions {
 	 * Override per-app for noisier (low) or pre-escalated (high) defaults.
 	 */
 	escalationDefaultUrgency?: EscalationUrgency;
+	/**
+	 * Agent rollout stage. `'autonomous'` (default) keeps the framework's
+	 * v0.4 behavior. Set a string for a fixed mode across all turns; pass
+	 * a function to vary per-turn (typically per-tenant via a tenant
+	 * lookup against `ctx.user`):
+	 *
+	 *   mode: 'shadow'
+	 *   mode: async (ctx) => (await tenantStore.get(ctx.tenantId)).mode
+	 *
+	 * See `AgentMode` for the semantics of each stage.
+	 */
+	mode?: AgentMode | ((ctx: HandlerContext) => AgentMode | Promise<AgentMode>);
 }
 
 type Lifecycle = 'onFirstContact' | 'onMessage' | 'afterReply' | 'onError';
@@ -122,6 +134,7 @@ export class Agent {
 	readonly replyEnricher: ReplyEnricher | null;
 	readonly escalationStore: EscalationStore | null;
 	readonly escalationDefaultUrgency: EscalationUrgency;
+	readonly mode: AgentMode | ((ctx: HandlerContext) => AgentMode | Promise<AgentMode>);
 	readonly _lifecycleHooks: Record<Lifecycle, Array<(payload: unknown) => void | Promise<void>>> = {
 		onFirstContact: [],
 		onMessage: [],
@@ -151,6 +164,7 @@ export class Agent {
 			replyEnricher = null,
 			escalationStore = null,
 			escalationDefaultUrgency = 'medium',
+			mode = 'autonomous',
 		} = opts;
 
 		if (!whatsapp?.endpoint || !whatsapp?.token) {
@@ -175,6 +189,7 @@ export class Agent {
 		this.replyEnricher = replyEnricher ? asEnricher(replyEnricher) : null;
 		this.escalationStore = escalationStore;
 		this.escalationDefaultUrgency = escalationDefaultUrgency;
+		this.mode = mode;
 
 		this.queue = new D1CoalesceQueue({ db: this.db, ...queue });
 		this.session = stores.session ?? new SessionStore({ db: this.db });
@@ -339,14 +354,15 @@ export class Agent {
 		}
 
 		const session = await this.session.get(inbound.whatsapp);
-		const reply = this.replyHelper(inbound.whatsapp, inbound.wamid);
 
-		const ctx: HandlerContext = {
+		// Build the ctx without `reply` first so the mode resolver (function
+		// form) can read every other field of HandlerContext, then attach the
+		// reply helper which carries the resolved mode into reply.ai().
+		const partialCtx = {
 			inbound,
 			user: { whatsapp: inbound.whatsapp, name: inbound.name, lead: lead as Record<string, unknown> | null },
 			session: session as Record<string, unknown> | null,
 			text: inbound.text ?? '',
-			reply,
 			db: this.db,
 			client: this.client,
 			ai: this.ai,
@@ -359,6 +375,14 @@ export class Agent {
 			isFirstContact: isNew,
 			fromAd: !!inbound.fromAd,
 		};
+		const mode = await this.resolveMode(partialCtx as unknown as HandlerContext);
+		const reply = this.replyHelper(inbound.whatsapp, inbound.wamid, mode);
+
+		const ctx: HandlerContext = {
+			...partialCtx,
+			reply,
+			mode,
+		};
 
 		if (this.contextHook) {
 			Object.assign(ctx, await this.contextHook(ctx));
@@ -366,7 +390,28 @@ export class Agent {
 		return ctx;
 	}
 
-	private replyHelper(whatsapp: string, inboundWamid: string): ReplyHelper {
+	/**
+	 * Resolve the configured `mode` (string or function form) into a concrete
+	 * `AgentMode` for this turn. Fail-safe: if the resolver throws or returns
+	 * an unknown value, falls back to `'autonomous'` and logs.
+	 */
+	private async resolveMode(ctx: HandlerContext): Promise<AgentMode> {
+		const m = this.mode;
+		if (typeof m !== 'function') return m;
+		try {
+			const resolved = await m(ctx);
+			if (resolved === 'shadow' || resolved === 'assisted' || resolved === 'operator' || resolved === 'autonomous') {
+				return resolved;
+			}
+			console.warn('[Agent] mode resolver returned unknown value, defaulting to autonomous:', resolved);
+			return 'autonomous';
+		} catch (e) {
+			console.error('[Agent] mode resolver threw, defaulting to autonomous:', e instanceof Error ? e.message : e);
+			return 'autonomous';
+		}
+	}
+
+	private replyHelper(whatsapp: string, inboundWamid: string, mode: AgentMode): ReplyHelper {
 		const c = this.client;
 		const self = this;
 		return {
@@ -435,7 +480,10 @@ export class Agent {
 							threadId: newTid,
 						});
 						await self.log.updateAnswer(inboundWamid, { body: text, response: finalAnswer, summary: finalAnswer });
-						if (finalAnswer) await c.sendText(whatsapp, finalAnswer);
+						if (finalAnswer && mode !== 'shadow') await c.sendText(whatsapp, finalAnswer);
+						if (mode === 'assisted' && self.escalationStore) {
+							await self.recordAssistedReview(whatsapp, text, pipeCtx.traceId);
+						}
 						return { answer: finalAnswer, threadId: newTid };
 					} catch (err) {
 						outcome = 'error';
@@ -459,17 +507,44 @@ export class Agent {
 				}
 
 				await self.log.updateAnswer(inboundWamid, { body: text, response: enrichedAnswer, summary: outgoing });
-				if (outgoing) await c.sendText(whatsapp, outgoing);
+				if (outgoing && mode !== 'shadow') await c.sendText(whatsapp, outgoing);
 
-				if (long && self.summarizer) {
+				if (long && self.summarizer && mode !== 'shadow') {
 					await c.sendButtons(whatsapp, {
 						body: 'Want the full answer?',
 						buttons: [{ id: `expand_${inboundWamid}`, title: 'Show full answer' }],
 					});
 				}
+				if (mode === 'assisted' && self.escalationStore) {
+					await self.recordAssistedReview(whatsapp, text, null);
+				}
 				return { answer: enrichedAnswer, threadId: newTid };
 			},
 		};
+	}
+
+	/**
+	 * Record an `assisted_review` escalation per turn in `assisted` mode.
+	 * Never throws — a notifier failure shouldn't break the reply path.
+	 */
+	private async recordAssistedReview(
+		whatsapp: string,
+		text: string,
+		traceId: string | null,
+	): Promise<void> {
+		if (!this.escalationStore) return;
+		try {
+			await this.escalationStore.record({
+				whatsapp,
+				reason: 'assisted_review',
+				urgency: 'low',
+				message: text.slice(0, 1000),
+				traceId,
+				tenantId: this.tenantId,
+			});
+		} catch (e) {
+			console.error('[Agent] assisted_review record failed:', e instanceof Error ? e.message : e);
+		}
 	}
 
 	private async enrichAnswer(
