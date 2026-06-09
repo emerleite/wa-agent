@@ -2,6 +2,12 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.5.1] — 2026-06-09
+
+### Changed
+
+- **`normalizeIdentifier` overload narrowing** — the `fallback`-set case now returns `T` instead of `T | null`. Surfaced during the aysu back-migration: `normalizeIdentifier(raw, { map, fallback: 'OUTRO' })` previously required a non-null assertion at consumer sites. Split the single overload into two: one with `fallback: T` returning `T`, one with `fallback?: undefined` returning `T | null`. Backward compatible at runtime; type-only refinement.
+
 ## [0.5.0] — 2026-06-09
 
 ### Added

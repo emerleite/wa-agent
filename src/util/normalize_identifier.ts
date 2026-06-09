@@ -43,12 +43,22 @@ export interface NormalizeIdentifierOptions<T = string> {
 export function normalizeIdentifier(raw: string | null | undefined): string;
 
 /**
- * Normalize and resolve against a `map`. Returns the mapped value, or
- * `fallback` if provided, else `null`.
+ * Normalize and resolve against a `map`, with a `fallback` that's always
+ * returned on miss. Return type is `T` (never null) because `fallback` is
+ * non-nullable here.
  */
 export function normalizeIdentifier<T>(
 	raw: string | null | undefined,
-	options: NormalizeIdentifierOptions<T> & { map: Record<string, T> },
+	options: { map: Record<string, T>; fallback: T },
+): T;
+
+/**
+ * Normalize and resolve against a `map` with no fallback. Returns the
+ * mapped value or `null` on miss.
+ */
+export function normalizeIdentifier<T>(
+	raw: string | null | undefined,
+	options: { map: Record<string, T>; fallback?: undefined },
 ): T | null;
 
 export function normalizeIdentifier<T = string>(
