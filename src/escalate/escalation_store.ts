@@ -40,12 +40,27 @@ export type EscalationReason =
 	| (string & {});
 
 export interface EscalateArgs {
-	whatsapp: string;
+	/**
+	 * E.164 identifier of the user whose turn was escalated. Required for the
+	 * default schema; may be omitted when `omitColumns` includes `'whatsapp'`
+	 * (the app routes via a different column, e.g. a `patient_id` FK). When
+	 * omitted, the in-memory `EscalationRow.whatsapp` field defaults to `''`
+	 * for notifier consumers.
+	 */
+	whatsapp?: string | null;
 	reason: EscalationReason;
 	urgency: EscalationUrgency;
 	message: string;
 	traceId?: string | null;
 	tenantId?: string | null;
+	/**
+	 * Extra columns INSERTed alongside the framework columns — used when the
+	 * app's schema has columns the framework doesn't model (e.g. psico's
+	 * `patient_id` FK). Keys must appear in `EscalationStoreOptions.allowedExtraColumns`;
+	 * unlisted keys throw at runtime. Values are parameterized — only the
+	 * column-name identifier needs the allowlist.
+	 */
+	extraColumns?: Record<string, string | number | null>;
 }
 
 export interface ResolveArgs {
@@ -130,6 +145,25 @@ export interface EscalationStoreOptions {
 	 * Like `tableName`, each value must be a bare SQL identifier.
 	 */
 	columnMap?: Partial<Record<EscalationField, string>>;
+	/**
+	 * Logical fields to skip from INSERT entirely. Use when the app's table
+	 * has no such column — e.g. psico's `escalations` routes via `patient_id`
+	 * and has no `whatsapp` column, so `omitColumns: ['whatsapp']` keeps the
+	 * INSERT off that column. Omitted fields still flow into the in-memory
+	 * `EscalationRow` for notifier consumers (with empty defaults when not
+	 * populated via `extraColumns`).
+	 */
+	omitColumns?: ReadonlyArray<EscalationField>;
+	/**
+	 * Allowlist of physical column names accepted from `EscalateArgs.extraColumns`.
+	 * Required when callers pass `extraColumns` — keys not in this list throw
+	 * at runtime. Each entry must be a bare SQL identifier; values flow as
+	 * parameterized bindings.
+	 *
+	 *   allowedExtraColumns: ['patient_id']
+	 *     // psico tracks the patient FK alongside the framework columns.
+	 */
+	allowedExtraColumns?: ReadonlyArray<string>;
 }
 
 const URGENCY_RANK: Record<EscalationUrgency, number> = {
@@ -147,6 +181,8 @@ export class EscalationStore {
 	readonly notifyAtOrAbove: EscalationUrgency;
 	readonly tableName: string;
 	readonly columns: Readonly<Record<EscalationField, string>>;
+	readonly omitColumns: ReadonlySet<EscalationField>;
+	readonly allowedExtraColumns: ReadonlySet<string>;
 
 	constructor({
 		db,
@@ -154,6 +190,8 @@ export class EscalationStore {
 		notifyAtOrAbove = 'medium',
 		tableName = 'escalations',
 		columnMap,
+		omitColumns,
+		allowedExtraColumns,
 	}: EscalationStoreOptions) {
 		if (!db) throw new Error('EscalationStore: db required');
 		if (!SAFE_IDENT.test(tableName)) {
@@ -169,11 +207,22 @@ export class EscalationStore {
 				merged[k] = v;
 			}
 		}
+		const extra = new Set<string>();
+		if (allowedExtraColumns) {
+			for (const name of allowedExtraColumns) {
+				if (!SAFE_IDENT.test(name)) {
+					throw new Error(`EscalationStore: allowedExtraColumns "${name}" must be a bare SQL identifier`);
+				}
+				extra.add(name);
+			}
+		}
 		this.db = db;
 		this.notifier = notifier ?? new NoOpNotifier();
 		this.notifyAtOrAbove = notifyAtOrAbove;
 		this.tableName = tableName;
 		this.columns = Object.freeze(merged);
+		this.omitColumns = new Set(omitColumns ?? []);
+		this.allowedExtraColumns = extra;
 	}
 
 	/**
@@ -182,23 +231,50 @@ export class EscalationStore {
 	 * caught + logged so a downstream outage can't break escalation logging.
 	 */
 	async record(args: EscalateArgs): Promise<string> {
-		if (!args.whatsapp) throw new Error('EscalationStore.record: whatsapp required');
 		if (!args.reason) throw new Error('EscalationStore.record: reason required');
 		if (!args.message) throw new Error('EscalationStore.record: message required');
+		// whatsapp is required UNLESS the caller omitted that column from the
+		// schema — apps that route via patient_id (psico) or another FK set
+		// `omitColumns: ['whatsapp']` and leave `args.whatsapp` empty.
+		if (!this.omitColumns.has('whatsapp') && !args.whatsapp) {
+			throw new Error('EscalationStore.record: whatsapp required (or set omitColumns: [\'whatsapp\'])');
+		}
 
 		const id = crypto.randomUUID();
 		const c = this.columns;
-		const t = sql.raw(this.tableName);
+
+		// Build the INSERT row as (logicalField, value) pairs, skipping fields
+		// in `omitColumns`. `id` always inserted. Framework-managed columns
+		// (createdAt, resolvedAt, resolvedBy, notes) skipped from the INSERT
+		// regardless — they're driven by `resolve()`/`createdAt` default.
+		const framework: Array<[EscalationField, unknown]> = [
+			['id', id],
+			['whatsapp', args.whatsapp ?? ''],
+			['reason', args.reason],
+			['urgency', args.urgency],
+			['message', args.message],
+			['traceId', args.traceId ?? null],
+			['tenantId', args.tenantId ?? null],
+		];
+		const insertColumns: Array<ReturnType<typeof sql>> = [];
+		const insertValues: Array<unknown> = [];
+		for (const [field, value] of framework) {
+			if (this.omitColumns.has(field)) continue;
+			insertColumns.push(sql.raw(c[field]));
+			insertValues.push(value);
+		}
+		if (args.extraColumns) {
+			for (const [name, value] of Object.entries(args.extraColumns)) {
+				if (!this.allowedExtraColumns.has(name)) {
+					throw new Error(`EscalationStore.record: extraColumns.${name} is not in allowedExtraColumns`);
+				}
+				insertColumns.push(sql.raw(name));
+				insertValues.push(value);
+			}
+		}
 		const stmt = sql`
-			INSERT INTO ${t} (
-				${sql.raw(c.id)}, ${sql.raw(c.whatsapp)}, ${sql.raw(c.reason)},
-				${sql.raw(c.urgency)}, ${sql.raw(c.message)}, ${sql.raw(c.traceId)},
-				${sql.raw(c.tenantId)}
-			) VALUES (
-				${id}, ${args.whatsapp}, ${args.reason},
-				${args.urgency}, ${args.message}, ${args.traceId ?? null},
-				${args.tenantId ?? null}
-			)`;
+			INSERT INTO ${sql.raw(this.tableName)} (${sql.join(insertColumns, sql`, `)})
+			VALUES (${sql.join(insertValues.map((v) => sql`${v}`), sql`, `)})`;
 		await this.db.run(stmt);
 
 		if (URGENCY_RANK[args.urgency] >= URGENCY_RANK[this.notifyAtOrAbove]) {
@@ -273,19 +349,32 @@ export class EscalationStore {
 	 */
 	private selectList(): ReturnType<typeof sql> {
 		const c = this.columns;
-		const fragments = [
-			sql`${sql.raw(c.id)} AS id`,
-			sql`${sql.raw(c.whatsapp)} AS whatsapp`,
-			sql`${sql.raw(c.reason)} AS reason`,
-			sql`${sql.raw(c.urgency)} AS urgency`,
-			sql`${sql.raw(c.message)} AS message`,
-			sql`${sql.raw(c.traceId)} AS "traceId"`,
-			sql`${sql.raw(c.tenantId)} AS "tenantId"`,
-			sql`${sql.raw(c.createdAt)} AS "createdAt"`,
-			sql`${sql.raw(c.resolvedAt)} AS "resolvedAt"`,
-			sql`${sql.raw(c.resolvedBy)} AS "resolvedBy"`,
-			sql`${sql.raw(c.notes)} AS notes`,
+		const fields: Array<[EscalationField, string]> = [
+			['id', 'id'],
+			['whatsapp', 'whatsapp'],
+			['reason', 'reason'],
+			['urgency', 'urgency'],
+			['message', 'message'],
+			['traceId', '"traceId"'],
+			['tenantId', '"tenantId"'],
+			['createdAt', '"createdAt"'],
+			['resolvedAt', '"resolvedAt"'],
+			['resolvedBy', '"resolvedBy"'],
+			['notes', 'notes'],
 		];
+		const fragments = fields.map(([field, alias]) => {
+			// When a column is omitted from the schema, SELECT a literal default
+			// so the row shape still satisfies `EscalationRow`. Notifiers + list
+			// consumers can detect "this app doesn't track that field" by reading
+			// the empty/null value.
+			if (this.omitColumns.has(field)) {
+				const defaultValue = field === 'whatsapp' || field === 'reason' || field === 'urgency' || field === 'message' || field === 'id' || field === 'createdAt'
+					? sql`''`
+					: sql`NULL`;
+				return sql`${defaultValue} AS ${sql.raw(alias)}`;
+			}
+			return sql`${sql.raw(c[field])} AS ${sql.raw(alias)}`;
+		});
 		return sql.join(fragments, sql`, `);
 	}
 }

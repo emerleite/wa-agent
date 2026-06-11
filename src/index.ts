@@ -170,6 +170,25 @@ export type { EscalationRow } from './db/schema/escalations.js';
 export { DEFAULT_ESCALATION_COLUMNS } from './escalate/escalation_store.js';
 export type { EscalationField } from './escalate/escalation_store.js';
 
+// Multi-tenant routing
+export { MultiTenantAgentRegistry, MemoryAgentCache, mountMultiTenantWebhook } from './multi_tenant/registry.js';
+export type {
+	MultiTenantAgentRegistryOptions,
+	AgentCache,
+	MountMultiTenantWebhookOptions,
+} from './multi_tenant/registry.js';
+
+// User consent tracking + pipeline gate
+export { ConsentStore, consentGate, DEFAULT_CONSENT_COLUMNS } from './consent/consent_store.js';
+export type {
+	ConsentStoreOptions,
+	ConsentField,
+	ConsentRow,
+	ConsentGateOptions,
+	ConsentGateAction,
+	GrantOptions as ConsentGrantOptions,
+} from './consent/consent_store.js';
+
 // Account linking — short-lived web-issued codes → identity ⇄ whatsapp mapping
 export { AccountLinkStore, matchLinkCommand } from './link/account_link_store.js';
 export type {

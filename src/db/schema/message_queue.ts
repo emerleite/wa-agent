@@ -22,11 +22,18 @@ export const messageQueue = sqliteTable(
 		startedAt: text('started_at'),
 		completedAt: text('completed_at'),
 		errorMessage: text('error_message'),
+		/**
+		 * Multi-tenant scoping (v0.6+). NULL for single-tenant deployments —
+		 * the IS NULL filter in `claimBatch()` preserves their bit-for-bit
+		 * behavior. Populated for tenants behind `MultiTenantAgentRegistry`.
+		 */
+		tenantId: text('tenant_id'),
 	},
 	(t) => [
 		index('idx_mq_pending_scheduled').on(t.status, t.scheduledAt),
 		index('idx_mq_whatsapp_pending').on(t.whatsapp, t.status),
 		index('idx_mq_claim').on(t.whatsapp, t.status, t.startedAt),
+		index('idx_message_queue_tenant').on(t.tenantId, t.status, t.scheduledAt),
 	]
 );
 

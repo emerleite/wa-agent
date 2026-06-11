@@ -191,7 +191,11 @@ export class Agent {
 		this.escalationDefaultUrgency = escalationDefaultUrgency;
 		this.mode = mode;
 
-		this.queue = new D1CoalesceQueue({ db: this.db, ...queue });
+		// `tenantId` flows into the queue so multi-tenant deployments scope
+		// claimBatch / recoverStale / cleanup to this tenant's rows only.
+		// Single-tenant agents leave tenantId = null and behave bit-for-bit
+		// as in v0.5.
+		this.queue = new D1CoalesceQueue({ db: this.db, tenantId, ...queue });
 		this.session = stores.session ?? new SessionStore({ db: this.db });
 		this.log = stores.log ?? new MessageLog({ db: this.db });
 		this.leads = stores.leads ?? new LeadStore({ db: this.db, emit: this.emit });

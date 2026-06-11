@@ -834,7 +834,7 @@ The framework was extracted from a production bot ([bibliafala](https://bibliafa
 | `verse_images/handler.js` + `usage.js` (button → cap → R2 cache → send) | `ButtonImageDispatcher` (renderer-agnostic; supply `encode/decode/render/caption/cacheKey`) |
 | `devotional/content_generator.js` (idempotent daily-content table self-heal via LLM) | `ContentGenerator` (table-agnostic; supply `generate(date) => string`, `resetColumns` for derived artifacts) |
 
-### Extracted from sister projects (v0.4)
+### Extracted from sister projects (v0.4 – v0.6)
 
 The framework also absorbs patterns from `aysu` (WhatsApp nutrition agent) and `psico` (chief-of-staff for psychologists), both production users of `wa-agent` itself.
 
@@ -850,6 +850,9 @@ The framework also absorbs patterns from `aysu` (WhatsApp nutrition agent) and `
 | `psico/escalations` table (tenant FK, `resolution` column, NOT NULL constraints) | `EscalationStore.columnMap` + `tableName` (v0.5) — point the store at the app-owned table without losing referential integrity |
 | `aysu/util/category.ts` + `ai/classifier.ts` (two near-identical SCREAMING_SNAKE normalizers) | `normalizeIdentifier` (generic over T, optional `map` for enum resolution) |
 | `aysu/ai/classifier.ts` `TextClassifier` (LLM call + heuristic fallback on error) | `HeuristicFallbackClassifier` + `heuristicFallback` (composes with the existing `LLMIntentClassifier`) |
+| `psico/wa/tenant-resolver.ts` + `wa/agent-factory.ts` (phone_number_id → tenant → per-request Agent with KV cache) | `MultiTenantAgentRegistry` + `mountMultiTenantWebhook` + `MemoryAgentCache` (v0.6) |
+| `psico/wa/consents.ts` `hasAiConsent` + the `consents` table (patient_id + tenant_id FKs, `revoked_at` audit) | `ConsentStore` + `consentGate` with `columnMap` / `omitColumns` / `allowedExtraColumns` (v0.6) |
+| psico's `escalations` table — `patient_id` FK, no `whatsapp` column, `resolution` instead of `notes` | `EscalationStore` `omitColumns: ['whatsapp']` + `allowedExtraColumns: ['patient_id']` + `columnMap: { notes: 'resolution' }` (v0.6 closes the v0.5 gap) |
 
 ### Deliberately NOT extracted — domain-specific
 
@@ -971,6 +974,14 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 ## Status
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
+
+### v0.6.0 — additive release, no breaking changes from 0.5:
+
+- **`MultiTenantAgentRegistry` + `mountMultiTenantWebhook`** — opt-in multi-tenant routing. `resolveTenantId` + `buildAgent` factories, per-isolate `MemoryAgentCache`, pluggable `AgentCache` interface. Single-tenant `Agent` + `mountWebhook` is unchanged.
+- **Tenant-scoped queue** — `message_queue.tenant_id` column (migration `015`) added. `D1CoalesceQueue` filters `enqueue` / `claimBatch` / `recoverStale` / `cleanup` by tenant. Without scoping, the registry's per-tenant Agents could pick up each other's rows. Single-tenant deployments leave `tenantId` unset; `IS NULL` filter preserves behavior bit-for-bit.
+- **`ConsentStore` + `consentGate`** — per-user consent tracking with the same column-map / omit-columns / extra-columns flex as `EscalationStore`. New migration `014_consents.sql` ships the default schema; apps with richer schemas point the store at theirs via configuration. `consentGate` pipeline step short-circuits the turn when consent is missing.
+- **`EscalationStore` schema-flex completes the psico migration** — `omitColumns` lets apps skip framework columns their table doesn't have, `extraColumns` + `allowedExtraColumns` let them INSERT into columns the framework doesn't model. Both identifier-validated. Closes the gap from v0.5.
+- **`docs/MULTI_TENANT.md`** — decision tree, setup steps, rate-limit-before-resolution recipe, cost/latency reference, single→multi migration in 4 steps, anti-patterns.
 
 ### v0.5.0 — additive release, no breaking changes from 0.4:
 

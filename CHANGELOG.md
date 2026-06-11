@@ -2,6 +2,45 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.6.0] — 2026-06-11
+
+### Added
+
+- **`MultiTenantAgentRegistry` + `mountMultiTenantWebhook`** — opt-in routing layer for BSP-style apps that serve many WhatsApp numbers from one Worker. Single-tenant `Agent` + `mountWebhook` is unchanged; the registry is a sibling, not a replacement.
+  - `resolveTenantId(env, envelope) → string | null` extracts the tenant from `metadata.phone_number_id` (typically a KV lookup).
+  - `buildAgent(env, tenantId) → Agent` constructs the per-tenant Agent (call site closes over your tenant config store).
+  - `MemoryAgentCache` is the default per-isolate cache. Pluggable via the `AgentCache` interface; `agentCache: null` disables caching for tests.
+  - `MultiTenantAgentRegistry.handleEnvelope(env, envelope, waitUntil)` for bare-fetch escape hatches; `mountMultiTenantWebhook(registry, app, '/wa', { anyTenantForVerify })` for Hono.
+  - `onUnknownTenant` callback for telemetry on unknown-phone-number hits.
+- **`message_queue.tenant_id` column** (migration `015_message_queue_tenant.sql`) — `D1CoalesceQueue` now accepts a `tenantId` option and scopes `enqueue` / `claimBatch` / `recoverStale` / `cleanup` to that tenant only. Without this, the registry's per-tenant Agents could pick up each other's queue rows and dispatch them through the wrong WhatsAppClient. Single-tenant agents leave `tenantId` unset and behave bit-for-bit as in v0.5 via an `IS NULL` filter. The `Agent` constructor wires its `tenantId` through to the queue automatically.
+- **`ConsentStore` + `consentGate`** — per-user consent tracking with the same column-map / omit-columns / extra-columns flex as `EscalationStore`. New migration `014_consents.sql` ships an opinionated default schema (`user_consents`); apps with their own richer schema (psico's `consents` with `tenant_id` FK + `patient_id` FK + `revoked_at` audit) point the store at it via the configuration options. `consentGate({ store, type })` is a pipeline step that short-circuits the turn when consent is missing; configurable action (`silent` default / `escalate` / `reply`) and observability hook `onBlocked`.
+- **`EscalationStore` schema-flexibility extensions (closes psico migration gap from v0.5)** — `EscalateArgs.whatsapp` is now optional. New `omitColumns?: ReadonlyArray<EscalationField>` lets apps skip framework columns their schema doesn't have (e.g. psico has no `whatsapp` column, routes via `patient_id`). New `allowedExtraColumns?: ReadonlyArray<string>` + `EscalateArgs.extraColumns?: Record<string, string | number | null>` let apps INSERT into columns the framework doesn't model. Both validated as bare SQL identifiers; `extraColumns` keys outside the allowlist throw at runtime. The `EscalationRow` projection populates safe defaults (`''` for required fields, `NULL` for others) when a column is omitted, so notifier consumers see a stable shape.
+- **`docs/MULTI_TENANT.md`** — full cookbook: decision tree (single vs multi-tenant vs `mode` function), setup steps, rate-limit-before-resolution recipe, cost/latency reference, migration path single→multi in 4 steps, anti-patterns.
+
+### Changed
+
+- `D1CoalesceQueue` options gain `tenantId?: string | null`. The `Agent` constructor sets it automatically from `AgentOptions.tenantId` — apps that build the queue directly without going through `Agent` should pass it explicitly.
+- README extended with v0.6 status block + 5 new rows in the "Extracted from sister projects" mapping table.
+
+### Tests
+
+- 697 → **762** tests passing across 58 files.
+- The 5-tenant × 5-envelope cross-tenant isolation test exercises the queue-scoping path; without it, Agent A's drain picks up Agent B's row and the assertion catches the resulting cross-WhatsAppClient dispatch.
+- Existing queue tests (15/15) and existing escalation tests (28 original + 14 columnMap) still green — the queue + escalation changes are backward compatible.
+
+### Migration notes
+
+No breaking changes. Existing single-tenant deployments need to apply two new migrations to their D1:
+
+```
+wrangler d1 migrations apply <db> --migrations-dir node_modules/wa-agent/migrations
+```
+
+- `014_consents.sql` — only used if you adopt `ConsentStore`. Otherwise harmless.
+- `015_message_queue_tenant.sql` — adds the nullable `tenant_id` column to `message_queue`. Required for v0.6 even on single-tenant deployments; the `IS NULL` filter preserves their behavior bit-for-bit.
+
+If you're adopting `MultiTenantAgentRegistry` on a previously-single-tenant deployment, existing `message_queue` rows have `tenant_id IS NULL` and will continue to be claimed only by an Agent without a tenantId. Drain them out (or let them age past `cleanupAfterDays`) before flipping the switch.
+
 ## [0.5.1] — 2026-06-09
 
 ### Changed

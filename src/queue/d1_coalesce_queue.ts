@@ -21,6 +21,14 @@ export interface D1QueueOptions {
 	maxPerInvocation?: number;
 	retryDelaySeconds?: number;
 	cleanupAfterDays?: number;
+	/**
+	 * Multi-tenant scoping (v0.6+). When set, `enqueue` writes the tenantId
+	 * to the row and `claimBatch` only picks rows for THIS tenant. Single-tenant
+	 * deployments leave this unset (or null) — the IS NULL filter preserves
+	 * pre-v0.6 behavior bit-for-bit. Set this to the same string `Agent` uses
+	 * for `tenantId` so the registry's per-tenant Agents stay isolated.
+	 */
+	tenantId?: string | null;
 }
 
 export interface QueueRow {
@@ -75,6 +83,7 @@ export class D1CoalesceQueue {
 	readonly maxPerInvocation: number;
 	readonly retryDelaySeconds: number;
 	readonly cleanupAfterDays: number;
+	readonly tenantId: string | null;
 
 	constructor({
 		db,
@@ -84,6 +93,7 @@ export class D1CoalesceQueue {
 		maxPerInvocation = 50,
 		retryDelaySeconds = 30,
 		cleanupAfterDays = 7,
+		tenantId = null,
 	}: D1QueueOptions) {
 		if (!db) throw new Error('D1CoalesceQueue: db required');
 		this.db = db;
@@ -93,6 +103,7 @@ export class D1CoalesceQueue {
 		this.maxPerInvocation = maxPerInvocation;
 		this.retryDelaySeconds = retryDelaySeconds;
 		this.cleanupAfterDays = cleanupAfterDays;
+		this.tenantId = tenantId;
 	}
 
 	async enqueue(envelope: InboundEnvelope): Promise<boolean> {
@@ -106,20 +117,40 @@ export class D1CoalesceQueue {
 
 		const ins = await this.db
 			.insert(messageQueue)
-			.values({ messageId: wamid, whatsapp, payload, scheduledAt: debounceExpr })
+			.values({ messageId: wamid, whatsapp, payload, scheduledAt: debounceExpr, tenantId: this.tenantId })
 			.onConflictDoNothing({ target: messageQueue.messageId })
 			.returning({ id: messageQueue.id });
 
 		if (ins.length === 0) return false;
 
 		// Push the debounce forward for every still-pending row on this user so the
-		// whole burst settles to the same fire time.
+		// whole burst settles to the same fire time. Scope to this tenant —
+		// multi-tenant deployments don't want one tenant's burst to slide
+		// another tenant's queue forward.
 		await this.db
 			.update(messageQueue)
 			.set({ scheduledAt: debounceExpr })
-			.where(and(eq(messageQueue.whatsapp, whatsapp), eq(messageQueue.status, 'pending')));
+			.where(
+				and(
+					eq(messageQueue.whatsapp, whatsapp),
+					eq(messageQueue.status, 'pending'),
+					this.tenantScopeFilter(),
+				),
+			);
 
 		return true;
+	}
+
+	/**
+	 * SQL fragment that scopes a query to this queue's tenantId. Single-tenant
+	 * deployments (tenantId === null) filter by `tenant_id IS NULL`; tenant
+	 * deployments filter by `tenant_id = ?`. Centralized so enqueue, claim,
+	 * recover, and cleanup stay consistent.
+	 */
+	private tenantScopeFilter() {
+		return this.tenantId === null
+			? sql`${messageQueue.tenantId} IS NULL`
+			: eq(messageQueue.tenantId, this.tenantId);
 	}
 
 	async processAll(handler: BatchHandler): Promise<number> {
@@ -151,11 +182,19 @@ export class D1CoalesceQueue {
 	}
 
 	async claimBatch(): Promise<QueueRow[]> {
-		// Pick the user whose oldest pending row is due.
+		// Pick the user whose oldest pending row is due — scoped to this
+		// tenant so multi-tenant deployments don't dispatch one tenant's
+		// rows through another tenant's Agent.
 		const next = await this.db
 			.select({ whatsapp: messageQueue.whatsapp })
 			.from(messageQueue)
-			.where(and(eq(messageQueue.status, 'pending'), lte(messageQueue.scheduledAt, sql`(datetime('now'))`)))
+			.where(
+				and(
+					eq(messageQueue.status, 'pending'),
+					lte(messageQueue.scheduledAt, sql`(datetime('now'))`),
+					this.tenantScopeFilter(),
+				),
+			)
 			.orderBy(asc(messageQueue.createdAt))
 			.limit(1);
 		if (!next[0]) return [];
@@ -175,7 +214,8 @@ export class D1CoalesceQueue {
 				and(
 					eq(messageQueue.whatsapp, next[0].whatsapp),
 					eq(messageQueue.status, 'pending'),
-					lte(messageQueue.scheduledAt, sql`(datetime('now'))`)
+					lte(messageQueue.scheduledAt, sql`(datetime('now'))`),
+					this.tenantScopeFilter(),
 				)
 			)
 			.returning();
@@ -225,7 +265,8 @@ export class D1CoalesceQueue {
 			.where(
 				and(
 					eq(messageQueue.status, 'processing'),
-					lt(messageQueue.startedAt, sql.raw(`(datetime('now', '-${this.staleMinutes} minutes'))`))
+					lt(messageQueue.startedAt, sql.raw(`(datetime('now', '-${this.staleMinutes} minutes'))`)),
+					this.tenantScopeFilter(),
 				)
 			);
 	}
@@ -236,7 +277,8 @@ export class D1CoalesceQueue {
 			.where(
 				and(
 					eq(messageQueue.status, 'done'),
-					lt(messageQueue.completedAt, sql.raw(`(datetime('now', '-${this.cleanupAfterDays} days'))`))
+					lt(messageQueue.completedAt, sql.raw(`(datetime('now', '-${this.cleanupAfterDays} days'))`)),
+					this.tenantScopeFilter(),
 				)
 			);
 	}
