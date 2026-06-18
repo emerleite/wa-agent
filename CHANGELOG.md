@@ -2,6 +2,12 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.6.1] — 2026-06-18
+
+### Changed
+
+- **`InboundEnvelope`, `RawMessage`, `InboundReferral` now exported as public types.** Surfaced during the psico v0.6 back-migration: `MultiTenantAgentRegistry.resolveTenantId(env, envelope)` accepts an `InboundEnvelope`, but the type wasn't re-exported from `src/index.ts`, so consumer code couldn't annotate its callbacks without reaching into `'wa-agent/dist/types'`. All three were already in the source — type-only additive change, no runtime impact.
+
 ## [0.6.0] — 2026-06-11
 
 ### Added
