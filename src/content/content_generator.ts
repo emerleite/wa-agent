@@ -35,10 +35,14 @@
  *   });
  */
 import { sql } from 'drizzle-orm';
-import type { DB } from '../db/client.js';
+import { normalizeDb, type DB } from '../db/client.js';
 
 export interface ContentGeneratorOptions {
-	db: DB;
+	/**
+	 * D1 binding OR a pre-built Drizzle client (any schema). v0.7+:
+	 * normalized internally.
+	 */
+	db: D1Database | DB;
 	/** Name of the app-defined content table. */
 	table: string;
 	/** Column holding the YYYY-MM-DD date. Default `date`. */
@@ -106,7 +110,7 @@ export class ContentGenerator {
 		}
 		if (typeof generate !== 'function') throw new Error('ContentGenerator: generate function required');
 
-		this.db = db;
+		this.db = normalizeDb(db);
 		this.table = table;
 		this.dateColumn = dateColumn;
 		this.contentColumn = contentColumn;

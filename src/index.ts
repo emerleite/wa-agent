@@ -11,7 +11,7 @@ export type { AgentOptions } from './agent.js';
 export { mountWebhook } from './hono.js';
 
 // Drizzle DB layer (v0.2+)
-export { createDb, isDrizzleClient } from './db/client.js';
+export { createDb, isDrizzleClient, normalizeDb } from './db/client.js';
 export type { DB, Schema } from './db/client.js';
 export * as schema from './db/schema/index.js';
 
@@ -187,6 +187,8 @@ export type {
 	ConsentGateOptions,
 	ConsentGateAction,
 	GrantOptions as ConsentGrantOptions,
+	ConsentLookupOptions,
+	ConsentWhereExtra,
 } from './consent/consent_store.js';
 
 // Account linking — short-lived web-issued codes → identity ⇄ whatsapp mapping

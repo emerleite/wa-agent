@@ -66,6 +66,7 @@ import {
 	EscalationStore,
 	SlackNotifier,
 	LLMCostCalculator,
+	ConsentStore,
 } from 'wa-agent';
 
 // Typed preference for delivery format
@@ -160,6 +161,12 @@ function init(env) {
 				`${answer.trim()}\n\n_More tips:_ ${tagWa('https://example.com/help', 'ai_reply')}`,
 		],
 	});
+
+	// v0.6: per-user opt-in for AI processing. The welcome flow already
+	// shows a `consent_ai_processing` button; the button handler below
+	// records the grant. The AI-fallback path checks `consents.has(...)`
+	// before billing the user for an LLM turn.
+	const consents = new ConsentStore({ db: env.DB });
 
 	// Escalation log + optional Slack fan-out. The pipeline's `PolicyGate`
 	// returns `action: 'escalate'` for messages containing a phone number;
@@ -359,12 +366,33 @@ function init(env) {
 			return;
 		}
 
+		// 3. ConsentStore gate (v0.6) — make sure the user opted in to AI
+		// processing. The opt-in button taps `consent_ai_processing` (handled
+		// below) record the grant. Without consent we route them through the
+		// welcome flow instead of billing the LLM.
+		if (!(await consents.has(user.whatsapp, 'ai_processing'))) {
+			await reply.text(
+				'Antes de seguir, preciso que você aceite o uso de IA. Toque no botão acima ou digite "ajuda".',
+			);
+			return;
+		}
+
 		await reply.markRead();
 		const session = await agent.session.get(user.whatsapp);
 		await reply.ai(prompt, { threadId: session?.threadId });
 	});
 
 	// ---- Buttons ----
+	// v0.6: opt-in for AI processing. The welcome flow's "Quero Conversar"
+	// button has id `consent_ai_processing`; this handler records the grant
+	// and unlocks the AI fallback in onText above.
+	agent.button('consent_ai_processing', async ({ user, inbound, reply }) => {
+		await consents.grant(user.whatsapp, 'ai_processing', {
+			evidence: inbound.wamid ?? 'consent_ai_processing_button',
+		});
+		await reply.text('Obrigado! Manda sua dúvida que eu respondo.');
+	});
+
 	agent.buttonPrefix('expand_', async ({ suffix, log, reply }) => {
 		const row = await log.byWamid(suffix);
 		if (row?.response) await reply.text(row.response);

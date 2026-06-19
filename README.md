@@ -777,7 +777,8 @@ export default {
 
 - [`examples/echo-bot/`](./examples/echo-bot) — minimal: webhook → echo. About 30 lines.
 - [`examples/support-bot/`](./examples/support-bot) — focused: AI pipeline + ReplyEnricher CTA + tier gate, no cron. About 100 lines. The right starting point if you want an AI support agent, not a content calendar.
-- [`examples/full-bot/`](./examples/full-bot) — every primitive in one bot: AI with reply-enricher CTA footer, summarization, transcription, devotional broadcast, daily yes/no, 21-day plan, TTS narration cached in R2, payment-link-backed upsell, `link <code>` account redemption, opportunistic free-tier tip via `afterReply`.
+- [`examples/full-bot/`](./examples/full-bot) — every primitive in one bot: AI with reply-enricher CTA footer, summarization, transcription, devotional broadcast, daily yes/no, 21-day plan, TTS narration cached in R2, payment-link-backed upsell, `link <code>` account redemption, opportunistic free-tier tip via `afterReply`, `ConsentStore` gate before AI fallback.
+- [`examples/multi-tenant-bot/`](./examples/multi-tenant-bot) — BSP-style: one Worker serves many WhatsApp numbers via `MultiTenantAgentRegistry` (v0.6+) + `drainAll` cron (v0.7+). About 130 lines. Pair with `docs/MULTI_TENANT.md`.
 
 ## Feature audit — bibliafala → wa-agent
 
@@ -974,6 +975,15 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 ## Status
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
+
+### v0.7.0 — additive release, no breaking changes from 0.6:
+
+- **App-table stores + `Agent` accept `D1Database | DB`** — `normalizeDb()` rebinds foreign Drizzle clients (`createDB(env.DB)` from a sister package) to the framework schema. Closes the friction surfaced in the psico v0.6 back-migration. `normalizeDb` exported as a util.
+- **`ConsentStore` `whereExtra` callback** — `has` / `list` / `revoke` accept `{ tenantId?, whereExtra? }` for extra-predicate filtering. Closes the psico ConsentStore migration: apps with rich schemas (patient_id FK + tenant FK) can JOIN through a subquery without forking the store. v0.6 string-tenantId signature preserved.
+- **`AgentOptions.onEscalate` transform** — sync-or-async callback that augments the auto-record `EscalateArgs` before they reach `escalationStore.record(...)`. Apps can resolve `patient_id` from `whatsapp` and inject `extraColumns` for schemas the framework doesn't model. Failures degrade safely.
+- **`MultiTenantAgentRegistry.drainAll`** + `enumerateTenants` option — cron-time helper that iterates every tenant and schedules per-tenant `drain() + queue.cleanup()` via `waitUntil`. Per-tenant failures caught so one bad tenant can't break the cron.
+- **`examples/multi-tenant-bot/`** — minimal BSP example with the registry + `drainAll` cron. Pair with `docs/MULTI_TENANT.md`.
+- **`support-bot` + `full-bot` updated** — `HeuristicFallbackClassifier` + `AGENT_MODE` env demo in support-bot; `ConsentStore` gate before AI fallback in full-bot.
 
 ### v0.6.0 — additive release, no breaking changes from 0.5:
 

@@ -26,7 +26,7 @@
  * surfaces open ones for dashboards.
  */
 import { sql } from 'drizzle-orm';
-import type { DB } from '../db/client.js';
+import { normalizeDb, type DB } from '../db/client.js';
 import type { EscalationRow } from '../db/schema/escalations.js';
 
 export type EscalationUrgency = 'low' | 'medium' | 'high' | 'critical';
@@ -117,7 +117,12 @@ export const DEFAULT_ESCALATION_COLUMNS: Readonly<Record<EscalationField, string
 });
 
 export interface EscalationStoreOptions {
-	db: DB;
+	/**
+	 * D1 binding OR a pre-built Drizzle client (any schema). v0.7+:
+	 * normalized internally; pass `env.DB` directly or your own
+	 * `createDb(env.DB)` — both work.
+	 */
+	db: D1Database | DB;
 	/** Optional sink for newly-recorded escalations. Default: NoOpNotifier. */
 	notifier?: EscalationNotifier | null;
 	/**
@@ -216,7 +221,7 @@ export class EscalationStore {
 				extra.add(name);
 			}
 		}
-		this.db = db;
+		this.db = normalizeDb(db);
 		this.notifier = notifier ?? new NoOpNotifier();
 		this.notifyAtOrAbove = notifyAtOrAbove;
 		this.tableName = tableName;

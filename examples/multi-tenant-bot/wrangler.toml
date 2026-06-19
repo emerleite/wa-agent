@@ -1,0 +1,18 @@
+name = "multi-tenant-bot"
+main = "src/index.js"
+compatibility_date = "2026-06-10"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "multi-tenant-bot"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
+# Tenant phone_number_id → tenantId mapping + agent cache TTLs.
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_YOUR_KV_ID"
+
+# Cron — drains every tenant's queue once per minute. Adjust to your traffic.
+[triggers]
+crons = ["* * * * *"]

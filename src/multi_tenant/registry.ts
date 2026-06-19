@@ -69,6 +69,21 @@ export interface MultiTenantAgentRegistryOptions {
 	 * Use to emit telemetry, count unknown-number hits, etc.
 	 */
 	onUnknownTenant?: (env: unknown, envelope: InboundEnvelope) => void | Promise<void>;
+	/**
+	 * Enumerate every tenantId the bot serves. Used by `drainAll` (v0.7+)
+	 * to schedule per-tenant queue drains from a single cron trigger. The
+	 * scheduled cron handler typically delegates to this so the registry
+	 * can iterate without each app re-implementing the lookup.
+	 *
+	 *   enumerateTenants: async (env) => {
+	 *     const r = await env.DB.prepare('SELECT id FROM tenants').all<{ id: string }>();
+	 *     return (r.results ?? []).map(t => t.id);
+	 *   }
+	 *
+	 * Apps that paginate (hundreds of tenants) extend this signature later
+	 * — v0.7 ships the simple version.
+	 */
+	enumerateTenants?: (env: unknown) => Promise<string[]> | string[];
 }
 
 /**
@@ -102,6 +117,7 @@ export class MultiTenantAgentRegistry {
 	readonly buildAgent: MultiTenantAgentRegistryOptions['buildAgent'];
 	readonly agentCache: AgentCache | null;
 	readonly onUnknownTenant: (env: unknown, envelope: InboundEnvelope) => void | Promise<void>;
+	readonly enumerateTenants: ((env: unknown) => Promise<string[]> | string[]) | null;
 
 	constructor(opts: MultiTenantAgentRegistryOptions) {
 		if (!opts.resolveTenantId) throw new Error('MultiTenantAgentRegistry: resolveTenantId required');
@@ -112,6 +128,58 @@ export class MultiTenantAgentRegistry {
 		// memory default. Tests use the null path to assert build cost.
 		this.agentCache = opts.agentCache === null ? null : opts.agentCache ?? new MemoryAgentCache();
 		this.onUnknownTenant = opts.onUnknownTenant ?? defaultOnUnknownTenant;
+		this.enumerateTenants = opts.enumerateTenants ?? null;
+	}
+
+	/**
+	 * Iterate every tenant from `enumerateTenants`, resolve each Agent
+	 * (cache-friendly), and schedule `drain() + queue.cleanup()` via
+	 * `waitUntil`. Designed for `Worker.scheduled(event, env, ctx)`:
+	 *
+	 *   scheduled: (event, env, ctx) =>
+	 *     registry.drainAll(env, (p) => ctx.waitUntil(p))
+	 *
+	 * `enumerateTenants` MUST be configured at construction or this throws —
+	 * the registry has no other way to know which tenants exist. Apps that
+	 * paginate (hundreds of tenants) should override per-batch in v0.8.
+	 *
+	 * Per-tenant failures are caught and logged so one bad tenant doesn't
+	 * stop the cron from draining the rest. The return value reports how
+	 * many drains were scheduled, useful for cron-handler logs / metrics.
+	 */
+	async drainAll(env: unknown, waitUntil: (p: Promise<unknown>) => void): Promise<{ scheduled: number }> {
+		if (!this.enumerateTenants) {
+			throw new Error(
+				'MultiTenantAgentRegistry.drainAll: enumerateTenants must be configured at construction',
+			);
+		}
+		let tenantIds: string[];
+		try {
+			tenantIds = await this.enumerateTenants(env);
+		} catch (e) {
+			console.error('[MultiTenantAgentRegistry] enumerateTenants threw:', e instanceof Error ? e.message : e);
+			return { scheduled: 0 };
+		}
+		let scheduled = 0;
+		for (const tenantId of tenantIds) {
+			try {
+				const agent = await this.agentFor(env, tenantId);
+				waitUntil(
+					(async () => {
+						try {
+							await agent.drain();
+							await agent.queue.cleanup();
+						} catch (e) {
+							console.error(`[MultiTenantAgentRegistry] drain ${tenantId} failed:`, e instanceof Error ? e.message : e);
+						}
+					})(),
+				);
+				scheduled += 1;
+			} catch (e) {
+				console.error(`[MultiTenantAgentRegistry] agentFor ${tenantId} failed:`, e instanceof Error ? e.message : e);
+			}
+		}
+		return { scheduled };
 	}
 
 	/**

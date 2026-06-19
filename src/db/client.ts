@@ -26,4 +26,30 @@ export function isDrizzleClient(db: D1Database | DB): db is DB {
 	return typeof (db as { _?: unknown })._ === 'object' && (db as { _?: unknown })._ !== null;
 }
 
+/**
+ * Accept either a raw `D1Database` binding or an already-built Drizzle
+ * client; return the framework's Drizzle client. Eliminates the friction
+ * that surfaced in the psico v0.6 back-migration where downstream apps
+ * with their own Drizzle clients (typed against their own schemas) couldn't
+ * pass them to framework stores without wrapping `createDb(env.DB)` first.
+ *
+ * The framework client is constructed against `wa-agent`'s schema. If the
+ * caller passes a foreign Drizzle client (e.g. `createDB(env.DB)` from a
+ * sister package), `normalizeDb` reaches into its underlying `$client`
+ * (the raw `D1Database`) and rebuilds against our schema. App-table stores
+ * (`EscalationStore`, `ConsentStore`, `ContentGenerator`, `HybridSearch`)
+ * only use the client for raw `sql\`...\`` queries — they never read or
+ * write the framework's typed tables through it, so this rebind is safe.
+ */
+export function normalizeDb(db: D1Database | DB): DB {
+	if (isDrizzleClient(db)) {
+		const underlying = (db as unknown as { $client?: D1Database }).$client;
+		if (underlying) return createDb(underlying);
+		// $client isn't reachable (older drizzle build, custom wrapper). Return
+		// the client as-is; raw-SQL queries don't depend on the schema binding.
+		return db;
+	}
+	return createDb(db);
+}
+
 export { schema };

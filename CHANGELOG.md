@@ -2,6 +2,36 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.7.0] — 2026-06-18
+
+### Added
+
+- **`normalizeDb(db: D1Database | DB): DB`** + every app-table store (`EscalationStore`, `ConsentStore`, `ContentGenerator`, `HybridSearch`) and `Agent` now accept either a raw `D1Database` binding or an already-built Drizzle client (any schema). Eliminates the friction surfaced in the psico v0.6 back-migration where downstream apps with their own typed Drizzle client (`createDB(env.DB)` from a sister package) couldn't pass it to a framework store without a wrapping `createDb(env.DB)`. `normalizeDb` rebinds foreign Drizzle clients to the framework schema by reading their underlying `$client`; app-table stores only do raw-SQL queries so the rebind is safe. `normalizeDb` exported from `src/index.ts`.
+- **`ConsentStore.has` / `.list` / `.revoke` accept a `ConsentLookupOptions` with `whereExtra`** — pluggable predicate callback that receives the resolved column map and returns an `SQL` fragment (or array) AND-ed into the WHERE clause. Closes the psico v0.6 ConsentStore migration gap: psico's `consents` table has `patient_id NOT NULL FK` instead of a `whatsapp` column, so consent lookup needs to join through `patients`. With `whereExtra: (cols) => sql\`patient_id IN (SELECT id FROM patients WHERE whatsapp = ${whatsapp})\`` the framework lookup works. Identifier safety inside the fragment is the caller's responsibility — same trust boundary as `columnMap`. The v0.6 string-tenantId signature (`has(whatsapp, type, 'tnt-A')`) still works; the new `opts` form is detected by type.
+- **`AgentOptions.onEscalate?: (args, ctx) => EscalateArgs`** — sync-or-async transform run before the auto-record path in `reply.ai()` calls `escalationStore.record(args)`. Closes the *other half* of psico's escalate gap: even with v0.6's `omitColumns` + `extraColumns`, the framework's auto-record path constructed args with a hardcoded shape and couldn't add `extraColumns: { patient_id }`. With `onEscalate`, apps augment per-turn: resolve patient_id from whatsapp, inject extra columns, override urgency, etc. Failures degrade to the un-transformed args — a buggy hook can't block the record path. `replyHelper` now closes over a deferred `ctxRef` so the auto-record path can read the fully-assembled `HandlerContext` (resolved lazily so handlers calling `reply.ai` always see the complete context).
+- **`MultiTenantAgentRegistry.drainAll(env, waitUntil)`** + `enumerateTenants?: (env) => Promise<string[]>` constructor option — cron-time helper for BSP-style apps. Iterates every tenant, calls `agentFor` (cache-friendly), schedules `drain() + queue.cleanup()` via `waitUntil`. Per-tenant failures are caught + logged so one bad tenant can't stop the cron from draining the rest. Returns `{ scheduled }` for handler-side metrics. `enumerateTenants` must be configured at construction or `drainAll` throws — the registry has no other way to know which tenants exist.
+- **`examples/multi-tenant-bot/`** — minimal BSP example, ~130 LOC. Demonstrates the registry, `enumerateTenants` driving a per-minute cron drain, KV-cached tenant config + the per-isolate Agent cache layering, rate-limit before tenant resolution.
+- **`support-bot` updated** — `HeuristicFallbackClassifier` wrapping the LLM intent classifier, `AGENT_MODE` env var demoing the v0.5 rollout-stage option (shadow / assisted / operator / autonomous).
+- **`full-bot` updated** — `ConsentStore` gate before the AI fallback. `consent_ai_processing` button records the grant; without it the AI path returns a "tap to accept" prompt instead of billing the LLM.
+
+### Changed
+
+- `Agent.db` type widened from `D1Database` to `D1Database | DB`. Already-passing single-tenant deployments see no behavior change.
+- README example list extended with the new `multi-tenant-bot`.
+
+### Tests
+
+- 762 → **792** tests passing across 60 files.
+- New unit tests for `normalizeDb` exercising the foreign-Drizzle-client rebind path.
+- New integration tests for `ConsentStore.whereExtra` against a psico-shaped table (patients FK + JOIN-via-subquery), `Agent.onEscalate` exercising the escalate decision path, and `MultiTenantAgentRegistry.drainAll` with stub Agents (avoids the @cloudflare/vitest-pool-workers isolated-storage cleanup that fires when D1-touching drain promises outlive the test — verified separately in the registry integration test).
+- Stryker score holds at **63.95** total / 80.84 covered-only (the v0.7 additions are integration-tested, not in the Stryker mutate set).
+
+### Migration notes
+
+No breaking changes. The widened `Agent.db` parameter accepts everything the v0.6 type did. The v0.6 `ConsentStore.has(whatsapp, type, 'tnt-A')` signature still works alongside the new `has(whatsapp, type, { tenantId, whereExtra })` form — both are accepted via runtime detection.
+
+If you're adopting `MultiTenantAgentRegistry.drainAll`, add an `enumerateTenants` callback to the registry constructor. Apps with hundreds of tenants should plan for pagination — v0.7 ships the simple form (`Promise<string[]>`); future versions may add batch support.
+
 ## [0.6.1] — 2026-06-18
 
 ### Changed

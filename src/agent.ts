@@ -11,7 +11,7 @@ import { SessionStore } from './session/session_store.js';
 import { MessageLog } from './session/message_log.js';
 import { LeadStore } from './lead/lead_store.js';
 import { MessageWindow } from './window/message_window.js';
-import { createDb, type DB } from './db/client.js';
+import { normalizeDb, type DB } from './db/client.js';
 import type { TierProvider } from './gate/tier_provider.js';
 import type { AccessGate } from './gate/access_gate.js';
 import type { OnboardingFlow } from './flow/onboarding.js';
@@ -20,7 +20,7 @@ import type { AgentPipeline } from './pipeline/pipeline.js';
 import type { PipelineContext } from './pipeline/types.js';
 import type { Blocklist } from './security/blocklist.js';
 import { asEnricher, type ReplyEnricher, type ReplyEnricherFn } from './ai/reply_enricher.js';
-import type { EscalationStore, EscalationUrgency } from './escalate/escalation_store.js';
+import type { EscalateArgs, EscalationStore, EscalationUrgency } from './escalate/escalation_store.js';
 import type { AgentMode, AIClient, ButtonsPayload, CtaUrlPayload, HandlerContext, ReplyHelper, SummarizerLike, InboundEnvelope, InboundMessage } from './types.js';
 
 export interface AgentOptions {
@@ -30,7 +30,12 @@ export interface AgentOptions {
 		verifyToken?: string;
 		appSecret?: string;
 	};
-	db: D1Database;
+	/**
+	 * D1 binding OR a pre-built Drizzle client. v0.7+: foreign Drizzle
+	 * clients (typed against another schema) are accepted and rebound
+	 * against the framework schema internally — see `normalizeDb`.
+	 */
+	db: D1Database | DB;
 	ai?: AIClient | null;
 	summarizer?: SummarizerLike | null;
 	summarizeOver?: number;
@@ -91,6 +96,21 @@ export interface AgentOptions {
 	 */
 	escalationDefaultUrgency?: EscalationUrgency;
 	/**
+	 * Transform the auto-record `EscalateArgs` before they reach
+	 * `escalationStore.record(...)`. Sync or async. Use this to augment the
+	 * framework defaults with app-specific data the Agent doesn't model:
+	 *
+	 *   onEscalate: async (args, ctx) => {
+	 *     const patientId = await resolvePatient(args.whatsapp, ctx.tenantId);
+	 *     return { ...args, extraColumns: { patient_id: patientId } };
+	 *   }
+	 *
+	 * Closes the v0.6 gap where apps with rich escalation schemas (psico's
+	 * `patient_id` FK) couldn't use the auto-record path — the framework
+	 * had no way to add `extraColumns` to args it constructed.
+	 */
+	onEscalate?: (args: EscalateArgs, ctx: HandlerContext) => Promise<EscalateArgs> | EscalateArgs;
+	/**
 	 * Agent rollout stage. `'autonomous'` (default) keeps the framework's
 	 * v0.4 behavior. Set a string for a fixed mode across all turns; pass
 	 * a function to vary per-turn (typically per-tenant via a tenant
@@ -134,6 +154,7 @@ export class Agent {
 	readonly replyEnricher: ReplyEnricher | null;
 	readonly escalationStore: EscalationStore | null;
 	readonly escalationDefaultUrgency: EscalationUrgency;
+	readonly onEscalate: ((args: EscalateArgs, ctx: HandlerContext) => Promise<EscalateArgs> | EscalateArgs) | null;
 	readonly mode: AgentMode | ((ctx: HandlerContext) => AgentMode | Promise<AgentMode>);
 	readonly _lifecycleHooks: Record<Lifecycle, Array<(payload: unknown) => void | Promise<void>>> = {
 		onFirstContact: [],
@@ -164,6 +185,7 @@ export class Agent {
 			replyEnricher = null,
 			escalationStore = null,
 			escalationDefaultUrgency = 'medium',
+			onEscalate = null,
 			mode = 'autonomous',
 		} = opts;
 
@@ -175,7 +197,7 @@ export class Agent {
 		this.client = new WhatsAppClient({ endpoint: whatsapp.endpoint, token: whatsapp.token });
 		this.verifyToken = whatsapp.verifyToken ?? null;
 		this.appSecret = whatsapp.appSecret ?? null;
-		this.db = createDb(db);
+		this.db = normalizeDb(db);
 		this.emit = events ? makeEmit(events) : noOpEmit;
 		this.ai = ai;
 		this.summarizer = summarizer;
@@ -189,6 +211,7 @@ export class Agent {
 		this.replyEnricher = replyEnricher ? asEnricher(replyEnricher) : null;
 		this.escalationStore = escalationStore;
 		this.escalationDefaultUrgency = escalationDefaultUrgency;
+		this.onEscalate = onEscalate;
 		this.mode = mode;
 
 		// `tenantId` flows into the queue so multi-tenant deployments scope
@@ -380,13 +403,18 @@ export class Agent {
 			fromAd: !!inbound.fromAd,
 		};
 		const mode = await this.resolveMode(partialCtx as unknown as HandlerContext);
-		const reply = this.replyHelper(inbound.whatsapp, inbound.wamid, mode);
+		// Deferred ref so the replyHelper's closures (specifically `reply.ai`'s
+		// onEscalate path, v0.7+) can read the fully-assembled ctx when the
+		// handler calls them — which always happens AFTER buildContext returns.
+		const ctxRef: { current: HandlerContext | null } = { current: null };
+		const reply = this.replyHelper(inbound.whatsapp, inbound.wamid, mode, ctxRef);
 
 		const ctx: HandlerContext = {
 			...partialCtx,
 			reply,
 			mode,
 		};
+		ctxRef.current = ctx;
 
 		if (this.contextHook) {
 			Object.assign(ctx, await this.contextHook(ctx));
@@ -415,7 +443,12 @@ export class Agent {
 		}
 	}
 
-	private replyHelper(whatsapp: string, inboundWamid: string, mode: AgentMode): ReplyHelper {
+	private replyHelper(
+		whatsapp: string,
+		inboundWamid: string,
+		mode: AgentMode,
+		ctxRef: { current: HandlerContext | null },
+	): ReplyHelper {
 		const c = this.client;
 		const self = this;
 		return {
@@ -457,15 +490,26 @@ export class Agent {
 							const reason = escalation.reason ?? (typeof decision.reason === 'string' ? decision.reason : 'pipeline_escalate');
 							const urgency = escalation.urgency ?? self.escalationDefaultUrgency;
 							const message = escalation.message ?? text.slice(0, 1000);
+							let args: EscalateArgs = {
+								whatsapp,
+								reason,
+								urgency,
+								message,
+								traceId: pipeCtx.traceId,
+								tenantId: self.tenantId,
+							};
+							// v0.7: let apps augment the args (e.g. add extraColumns:
+							// { patient_id }). Failures degrade to the un-transformed args
+							// — never block the record path on a hook bug.
+							if (self.onEscalate && ctxRef.current) {
+								try {
+									args = await self.onEscalate(args, ctxRef.current);
+								} catch (e) {
+									console.error('[Agent] onEscalate threw, using untransformed args:', e instanceof Error ? e.message : e);
+								}
+							}
 							try {
-								await self.escalationStore.record({
-									whatsapp,
-									reason,
-									urgency,
-									message,
-									traceId: pipeCtx.traceId,
-									tenantId: self.tenantId,
-								});
+								await self.escalationStore.record(args);
 							} catch (e) {
 								console.error('[Agent] escalationStore.record threw:', e instanceof Error ? e.message : e);
 							}

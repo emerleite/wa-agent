@@ -29,6 +29,7 @@ import {
 	honoRateLimit,
 	KvRateLimitStore,
 	RateLimit,
+	HeuristicFallbackClassifier,
 } from 'wa-agent';
 
 const tagWa = createUtmTagger({ source: 'whatsapp' });
@@ -52,17 +53,31 @@ function init(env) {
 	const tierProvider = new HttpTierProvider({ baseUrl: env.BILLING_API_URL, token: env.BILLING_API_TOKEN });
 	const gate = new AccessGate({ tierProvider, allowedTiers: ['premium', 'lifetime'], freeMessageLimit: 0 });
 
-	// Pipeline: intent classifier (stub for example), one policy guard, audit.
+	// Pipeline: intent classifier (real LLM here, regex fallback for safety),
+	// one policy guard, audit.
+	//
+	// v0.5: `HeuristicFallbackClassifier` wraps the primary (LLM) classifier
+	// with a deterministic regex fallback that fires when the LLM throws or
+	// returns null. Drop-in for `LLMIntentClassifier({ classify })` — same
+	// `IntentClassifyFn` shape, just composed.
+	const heuristicFn = (text) => {
+		const t = text.toLowerCase();
+		if (/cancel|unsubscribe/.test(t)) return { intent: 'cancel', confidence: 0.5 };
+		if (/price|cost|plan/.test(t)) return { intent: 'pricing', confidence: 0.5 };
+		if (/\?$/.test(t)) return { intent: 'question', confidence: 0.4 };
+		return { intent: 'other', confidence: 0.3 };
+	};
+	const llmFn = async (text) => {
+		// In production this is a generateObject() call to the Azure deployment;
+		// stubbed here to keep the example self-contained. The wrap means the
+		// regex fallback fires on either a thrown LLM error or a null result.
+		return heuristicFn(text);
+	};
+	const composed = new HeuristicFallbackClassifier({ primary: llmFn, fallback: heuristicFn });
 	const classifier = new LLMIntentClassifier({
 		intents: ['question', 'cancel', 'pricing', 'other'],
 		fallback: 'other',
-		classify: async (text) => {
-			const t = text.toLowerCase();
-			if (/cancel|unsubscribe/.test(t)) return { intent: 'cancel', confidence: 0.9 };
-			if (/price|cost|plan/.test(t)) return { intent: 'pricing', confidence: 0.8 };
-			if (/\?$/.test(t)) return { intent: 'question', confidence: 0.7 };
-			return { intent: 'other', confidence: 0.4 };
-		},
+		classify: composed.classify,
 	});
 	const phoneRegex = /\+?\d[\d\s().-]{8,}/;
 	const policy = new PolicyGate({
@@ -83,6 +98,16 @@ function init(env) {
 		],
 	});
 
+	// v0.5: rollout stage — set via env var so ops can flip without redeploying.
+	//   AGENT_MODE=shadow     → pipeline runs + audit fires, but client.sendText
+	//                           is suppressed. Use during pre-launch validation.
+	//   AGENT_MODE=assisted   → sends AI replies AND records an assisted_review
+	//                           escalation per turn for human spot-checks.
+	//   AGENT_MODE=autonomous → default; current production behavior.
+	const agentMode = ['shadow', 'assisted', 'operator', 'autonomous'].includes(env.AGENT_MODE)
+		? env.AGENT_MODE
+		: 'autonomous';
+
 	agent = new Agent({
 		whatsapp: {
 			endpoint: env.META_WA_ENDPOINT,
@@ -95,6 +120,7 @@ function init(env) {
 		summarizer,
 		tierProvider,
 		replyEnricher,
+		mode: agentMode,
 		events: { env },
 		pipeline: defaultPipeline({
 			ai: assistant,

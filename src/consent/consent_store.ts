@@ -41,7 +41,7 @@
  * via the optional `emit` callback.
  */
 import { sql } from 'drizzle-orm';
-import type { DB } from '../db/client.js';
+import { normalizeDb, type DB } from '../db/client.js';
 import type { PipelineContext, PipelineDecision, PipelineStep, StepResult } from '../pipeline/types.js';
 
 export interface ConsentRow {
@@ -73,7 +73,11 @@ export const DEFAULT_CONSENT_COLUMNS: Readonly<Record<ConsentField, string>> = O
 const SAFE_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export interface ConsentStoreOptions {
-	db: DB;
+	/**
+	 * D1 binding OR a pre-built Drizzle client (any schema). v0.7+:
+	 * normalized internally.
+	 */
+	db: D1Database | DB;
 	/** Physical table name. Default `'user_consents'`. */
 	tableName?: string;
 	/** Per-field column-name override (same pattern as `EscalationStore`). */
@@ -93,6 +97,35 @@ export interface GrantOptions {
 	evidence?: string | null;
 	tenantId?: string | null;
 	extraColumns?: Record<string, string | number | null>;
+}
+
+/**
+ * Extra-predicate hook surfaced on `has` / `list` / `revoke`. The callback
+ * receives the resolved column map so app code can reference the correct
+ * physical names; return an `SQL` fragment (or array of fragments) that
+ * gets AND-ed into the WHERE clause.
+ *
+ * Closes the psico migration gap from v0.6: psico's `consents` table has
+ * `patient_id NOT NULL FK` instead of a `whatsapp` column, so consent
+ * lookup needs to join through `patients`. With `whereExtra`:
+ *
+ *   await store.has('', 'ai_processing', {
+ *     tenantId,
+ *     whereExtra: (cols) => sql`${sql.raw(cols.tenantId)} = ${tenantId} AND
+ *       EXISTS (SELECT 1 FROM patients p WHERE p.id = patient_id AND p.whatsapp = ${whatsapp})`,
+ *   });
+ *
+ * Identifier safety inside the fragment is the caller's responsibility —
+ * the framework already trusts the columnMap allowlist; this is the same
+ * trust boundary.
+ */
+export type ConsentWhereExtra = (
+	cols: Readonly<Record<ConsentField, string>>,
+) => ReturnType<typeof sql> | ReturnType<typeof sql>[];
+
+export interface ConsentLookupOptions {
+	tenantId?: string | null;
+	whereExtra?: ConsentWhereExtra;
 }
 
 export class ConsentStore {
@@ -134,7 +167,7 @@ export class ConsentStore {
 				extra.add(name);
 			}
 		}
-		this.db = db;
+		this.db = normalizeDb(db);
 		this.tableName = tableName;
 		this.columns = Object.freeze(merged);
 		this.omitColumns = new Set(omitColumns ?? []);
@@ -148,7 +181,8 @@ export class ConsentStore {
 	 * Multi-tenant: when `defaultTenantId` is set the lookup is scoped to it.
 	 * Pass an explicit `tenantId` to override.
 	 */
-	async has(whatsapp: string, type: string, tenantId?: string | null): Promise<boolean> {
+	async has(whatsapp: string, type: string, opts?: ConsentLookupOptions | string | null): Promise<boolean> {
+		const { tenantId, whereExtra } = this.normalizeLookupOpts(opts);
 		const tid = tenantId ?? this.defaultTenantId;
 		const c = this.columns;
 		const filters = [
@@ -161,11 +195,26 @@ export class ConsentStore {
 		if (tid !== null && !this.omitColumns.has('tenantId')) {
 			filters.push(sql`${sql.raw(c.tenantId)} = ${tid}`);
 		}
+		if (whereExtra) {
+			const extra = whereExtra(c);
+			for (const f of Array.isArray(extra) ? extra : [extra]) filters.push(f);
+		}
 		const stmt = sql`
 			SELECT 1 AS one FROM ${sql.raw(this.tableName)}
 			WHERE ${sql.join(filters, sql` AND `)} LIMIT 1`;
 		const rows = await this.db.all<{ one: number }>(stmt);
 		return rows.length > 0;
+	}
+
+	/**
+	 * Normalize the third argument across the v0.6 (`tenantId?: string | null`)
+	 * and v0.7 (`opts?: ConsentLookupOptions`) signatures. Both forms are
+	 * accepted so existing callers see no break.
+	 */
+	private normalizeLookupOpts(opts: ConsentLookupOptions | string | null | undefined): ConsentLookupOptions {
+		if (opts === null || opts === undefined) return {};
+		if (typeof opts === 'string') return { tenantId: opts };
+		return opts;
 	}
 
 	/**
@@ -217,7 +266,8 @@ export class ConsentStore {
 	 * Mark an existing consent revoked. Idempotent — a non-existent or
 	 * already-revoked row results in 0 affected rows; the call still succeeds.
 	 */
-	async revoke(whatsapp: string, type: string, tenantId?: string | null): Promise<void> {
+	async revoke(whatsapp: string, type: string, opts?: ConsentLookupOptions | string | null): Promise<void> {
+		const { tenantId, whereExtra } = this.normalizeLookupOpts(opts);
 		const tid = tenantId ?? this.defaultTenantId;
 		const c = this.columns;
 		const filters = [sql`${sql.raw(c.type)} = ${type}`];
@@ -227,6 +277,10 @@ export class ConsentStore {
 		if (tid !== null && !this.omitColumns.has('tenantId')) {
 			filters.push(sql`${sql.raw(c.tenantId)} = ${tid}`);
 		}
+		if (whereExtra) {
+			const extra = whereExtra(c);
+			for (const f of Array.isArray(extra) ? extra : [extra]) filters.push(f);
+		}
 		const stmt = sql`
 			UPDATE ${sql.raw(this.tableName)}
 			SET ${sql.raw(c.revokedAt)} = (datetime('now'))
@@ -235,7 +289,8 @@ export class ConsentStore {
 	}
 
 	/** All consents (revoked + active) for one user. */
-	async list(whatsapp: string, tenantId?: string | null): Promise<ConsentRow[]> {
+	async list(whatsapp: string, opts?: ConsentLookupOptions | string | null): Promise<ConsentRow[]> {
+		const { tenantId, whereExtra } = this.normalizeLookupOpts(opts);
 		const tid = tenantId ?? this.defaultTenantId;
 		const c = this.columns;
 		const filters: Array<ReturnType<typeof sql>> = [];
@@ -244,6 +299,10 @@ export class ConsentStore {
 		}
 		if (tid !== null && !this.omitColumns.has('tenantId')) {
 			filters.push(sql`${sql.raw(c.tenantId)} = ${tid}`);
+		}
+		if (whereExtra) {
+			const extra = whereExtra(c);
+			for (const f of Array.isArray(extra) ? extra : [extra]) filters.push(f);
 		}
 		const where = filters.length ? sql` WHERE ${sql.join(filters, sql` AND `)}` : sql``;
 		const stmt = sql`

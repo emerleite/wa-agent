@@ -8,10 +8,14 @@
  * values (parameterized).
  */
 import { sql } from 'drizzle-orm';
-import type { DB } from '../db/client.js';
+import { normalizeDb, type DB } from '../db/client.js';
 
 export interface HybridSearchOptions {
-	db: DB;
+	/**
+	 * D1 binding OR a pre-built Drizzle client (any schema). v0.7+:
+	 * normalized internally.
+	 */
+	db: D1Database | DB;
 	contentTable: string;
 	ftsTable?: string;
 	searchColumns: string[];
@@ -58,7 +62,7 @@ export class HybridSearch {
 		if (!db) throw new Error('HybridSearch: db required');
 		if (!contentTable) throw new Error('HybridSearch: contentTable required');
 		if (!searchColumns?.length) throw new Error('HybridSearch: searchColumns required');
-		this.db = db;
+		this.db = normalizeDb(db);
 		this.contentTable = contentTable;
 		this.ftsTable = ftsTable || `${contentTable}_fts`;
 		this.searchColumns = searchColumns;
