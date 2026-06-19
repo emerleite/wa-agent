@@ -21,6 +21,7 @@ import type { PipelineContext } from './pipeline/types.js';
 import type { Blocklist } from './security/blocklist.js';
 import { asEnricher, type ReplyEnricher, type ReplyEnricherFn } from './ai/reply_enricher.js';
 import type { EscalateArgs, EscalationStore, EscalationUrgency } from './escalate/escalation_store.js';
+import type { AgentReviewQueue } from './review/review_queue.js';
 import type { AgentMode, AIClient, ButtonsPayload, CtaUrlPayload, HandlerContext, ReplyHelper, SummarizerLike, InboundEnvelope, InboundMessage } from './types.js';
 
 export interface AgentOptions {
@@ -111,6 +112,21 @@ export interface AgentOptions {
 	 */
 	onEscalate?: (args: EscalateArgs, ctx: HandlerContext) => Promise<EscalateArgs> | EscalateArgs;
 	/**
+	 * Queue-and-approve store for `assisted` mode. When set + `mode === 'assisted'`,
+	 * `reply.ai()` enqueues a `pending` row INSTEAD of calling `client.sendText`.
+	 * A human-review dashboard reads the rows and acks; the per-tenant cron
+	 * `MultiTenantAgentRegistry.dispatchApprovedReviews` (or your own handler)
+	 * picks up approved rows and dispatches them.
+	 *
+	 * Without this option, `assisted` mode still records the AI turn as an
+	 * `assisted_review` escalation (v0.5) and sends the answer immediately —
+	 * the v0.8 review queue closes the loop by gating the send on approval.
+	 *
+	 * Single-tenant apps can also subscribe directly to approved rows via
+	 * a cron handler that calls `queue.list({ status: 'approved' })`.
+	 */
+	reviewQueue?: AgentReviewQueue | null;
+	/**
 	 * Agent rollout stage. `'autonomous'` (default) keeps the framework's
 	 * v0.4 behavior. Set a string for a fixed mode across all turns; pass
 	 * a function to vary per-turn (typically per-tenant via a tenant
@@ -153,6 +169,7 @@ export class Agent {
 	readonly blocklist: Blocklist | null;
 	readonly replyEnricher: ReplyEnricher | null;
 	readonly escalationStore: EscalationStore | null;
+	readonly reviewQueue: AgentReviewQueue | null;
 	readonly escalationDefaultUrgency: EscalationUrgency;
 	readonly onEscalate: ((args: EscalateArgs, ctx: HandlerContext) => Promise<EscalateArgs> | EscalateArgs) | null;
 	readonly mode: AgentMode | ((ctx: HandlerContext) => AgentMode | Promise<AgentMode>);
@@ -186,6 +203,7 @@ export class Agent {
 			escalationStore = null,
 			escalationDefaultUrgency = 'medium',
 			onEscalate = null,
+			reviewQueue = null,
 			mode = 'autonomous',
 		} = opts;
 
@@ -212,6 +230,7 @@ export class Agent {
 		this.escalationStore = escalationStore;
 		this.escalationDefaultUrgency = escalationDefaultUrgency;
 		this.onEscalate = onEscalate;
+		this.reviewQueue = reviewQueue;
 		this.mode = mode;
 
 		// `tenantId` flows into the queue so multi-tenant deployments scope
@@ -452,7 +471,10 @@ export class Agent {
 		const c = this.client;
 		const self = this;
 		return {
-			text: (body: string, opts?: { previewUrl?: boolean }) => c.sendText(whatsapp, body, opts),
+			text: (body: string, opts?: { previewUrl?: boolean; inReplyToWamid?: string | null }) =>
+				c.sendText(whatsapp, body, opts),
+			replyTo: (wamid: string, body: string, opts?: { previewUrl?: boolean }) =>
+				c.sendText(whatsapp, body, { ...opts, inReplyToWamid: wamid }),
 			buttons: (data: ButtonsPayload) => c.sendButtons(whatsapp, data),
 			cta: (data: CtaUrlPayload) => c.sendCtaUrl(whatsapp, data),
 			image: (data: { url: string; caption?: string }) => c.sendImageUrl(whatsapp, data),
@@ -528,8 +550,26 @@ export class Agent {
 							threadId: newTid,
 						});
 						await self.log.updateAnswer(inboundWamid, { body: text, response: finalAnswer, summary: finalAnswer });
-						if (finalAnswer && mode !== 'shadow') await c.sendText(whatsapp, finalAnswer);
-						if (mode === 'assisted' && self.escalationStore) {
+						// v0.8: in 'assisted' mode with a reviewQueue, enqueue
+						// the answer for human review INSTEAD of sending. Without
+						// a reviewQueue, fall back to v0.5 behavior (send + record
+						// assisted_review escalation).
+						const queueing = mode === 'assisted' && self.reviewQueue !== null && !!finalAnswer;
+						if (finalAnswer && mode !== 'shadow' && !queueing) await c.sendText(whatsapp, finalAnswer);
+						if (queueing && self.reviewQueue && finalAnswer) {
+							try {
+								await self.reviewQueue.enqueue({
+									whatsapp,
+									aiText: finalAnswer,
+									wamid: inboundWamid,
+									traceId: pipeCtx.traceId,
+									tenantId: self.tenantId,
+									threadId: newTid,
+								});
+							} catch (e) {
+								console.error('[Agent] reviewQueue.enqueue threw:', e instanceof Error ? e.message : e);
+							}
+						} else if (mode === 'assisted' && self.escalationStore) {
 							await self.recordAssistedReview(whatsapp, text, pipeCtx.traceId);
 						}
 						return { answer: finalAnswer, threadId: newTid };
@@ -555,15 +595,29 @@ export class Agent {
 				}
 
 				await self.log.updateAnswer(inboundWamid, { body: text, response: enrichedAnswer, summary: outgoing });
-				if (outgoing && mode !== 'shadow') await c.sendText(whatsapp, outgoing);
+				// v0.8: same review-queue interception as the pipeline branch.
+				const queueing = mode === 'assisted' && self.reviewQueue !== null && !!outgoing;
+				if (outgoing && mode !== 'shadow' && !queueing) await c.sendText(whatsapp, outgoing);
 
-				if (long && self.summarizer && mode !== 'shadow') {
+				if (long && self.summarizer && mode !== 'shadow' && !queueing) {
 					await c.sendButtons(whatsapp, {
 						body: 'Want the full answer?',
 						buttons: [{ id: `expand_${inboundWamid}`, title: 'Show full answer' }],
 					});
 				}
-				if (mode === 'assisted' && self.escalationStore) {
+				if (queueing && self.reviewQueue && outgoing) {
+					try {
+						await self.reviewQueue.enqueue({
+							whatsapp,
+							aiText: outgoing,
+							wamid: inboundWamid,
+							tenantId: self.tenantId,
+							threadId: newTid,
+						});
+					} catch (e) {
+						console.error('[Agent] reviewQueue.enqueue threw:', e instanceof Error ? e.message : e);
+					}
+				} else if (mode === 'assisted' && self.escalationStore) {
 					await self.recordAssistedReview(whatsapp, text, null);
 				}
 				return { answer: enrichedAnswer, threadId: newTid };

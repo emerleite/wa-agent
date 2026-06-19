@@ -191,6 +191,19 @@ export type {
 	ConsentWhereExtra,
 } from './consent/consent_store.js';
 
+// Human-review queue (v0.8 — closes the assisted-mode loop)
+export { AgentReviewQueue, DEFAULT_REVIEW_COLUMNS } from './review/review_queue.js';
+export type {
+	AgentReviewQueueOptions,
+	ReviewField,
+	ReviewRow,
+	ReviewStatus,
+	EnqueueReviewArgs,
+	ApproveReviewArgs,
+	ListReviewsOptions,
+} from './review/review_queue.js';
+export type { PendingReviewRow } from './db/schema/pending_reviews.js';
+
 // Account linking — short-lived web-issued codes → identity ⇄ whatsapp mapping
 export { AccountLinkStore, matchLinkCommand } from './link/account_link_store.js';
 export type {

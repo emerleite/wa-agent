@@ -175,7 +175,17 @@ export interface TierResult {
 // ---- Per-turn handler context ----
 
 export interface ReplyHelper {
-	text(body: string, opts?: { previewUrl?: boolean }): Promise<boolean>;
+	text(body: string, opts?: { previewUrl?: boolean; inReplyToWamid?: string | null }): Promise<boolean>;
+	/**
+	 * v0.8 sugar — send a text reply that WhatsApp threads visually under
+	 * `inReplyToWamid` in the user's chat UI. Equivalent to
+	 * `reply.text(body, { inReplyToWamid: wamid })`.
+	 *
+	 *   agent.onText(async ({ inbound, reply }) => {
+	 *     await reply.replyTo(inbound.wamid, 'Got your message — here is more.');
+	 *   });
+	 */
+	replyTo(wamid: string, body: string, opts?: { previewUrl?: boolean }): Promise<boolean>;
 	buttons(data: ButtonsPayload): Promise<boolean>;
 	cta(data: CtaUrlPayload): Promise<boolean>;
 	image(data: { url: string; caption?: string }): Promise<boolean>;

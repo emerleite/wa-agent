@@ -2,6 +2,40 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.8.0] — 2026-06-19
+
+### Added
+
+- **`AgentReviewQueue`** + migration `018_pending_reviews.sql` — human-review queue that closes the loop opened by v0.5's `assisted` mode. Where assisted previously recorded AI turns AFTER sending (audit-only via `EscalationStore`), `assisted` mode + `reviewQueue` now intercepts the AI reply BEFORE send: the Agent enqueues a `pending` row in both pipeline AND direct-AI branches, and `await reply.ai(...)` returns without calling `sendText`. A human-in-the-loop UI calls `approve(id, { editedText?, approvedBy? })` (or `reject(id)`); cron picks up `approved` rows and dispatches via the right tenant's `WhatsAppClient`, then `markSent`. `markSent` only transitions from `approved` so a buggy cron can't silently bypass the review. Idempotent `approve` / `reject`. Same `tableName` + `columnMap` + `omitColumns` + `allowedExtraColumns` flex as `EscalationStore` / `ConsentStore`. When `reviewQueue` is null, v0.5's `recordAssistedReview` path still runs — backward compatible.
+- **`MultiTenantAgentRegistry.forEachTenant(env, waitUntil, fn)`** — generalization of `drainAll`. Iterates every tenant from `enumerateTenants`, calls `agentFor` (cache-friendly), schedules `fn(agent, tenantId)` via `waitUntil`. Per-tenant failures are caught + logged. Returns `{ scheduled, errored }`. `drainAll` is now implemented as `forEachTenant(env, waitUntil, (agent) => agent.drain())`. Use directly for per-tenant `MessageWindow.dispatch()`, content refresh, reminder jobs.
+- **`MultiTenantAgentRegistry.dispatchApprovedReviews(env, reviewQueue, waitUntil)`** — cron helper for the review queue. Pulls up to 500 approved rows per tick, routes each via `agentFor(row.tenantId)`, calls `sendText(row.whatsapp, row.editedText ?? row.aiText)`, then `markSent` on success. Per-row failures caught. Rows without `tenantId` are skipped with a warning (multi-tenant helper can't dispatch single-tenant rows; see the doc for the single-tenant cron pattern).
+- **`ReplyHelper.replyTo(wamid, body, opts?)`** + `text(body, { inReplyToWamid })` — outbound reply context. Sets Meta's `context.message_id` so the recipient sees a threaded "reply to message" bubble. Useful for review-queue dispatches (tie the approved reply to the original inbound `wamid`), "thanks for the photo" responses, async replies arriving after another message.
+- **`Blocklist` tenant scoping** + migration `017_blocklist_tenant.sql`. `blocked_numbers` table recreated with composite primary key `(whatsapp, tenant_id)` and `tenant_id NOT NULL DEFAULT ''`. The composite PK lets Drizzle's `onConflictDoUpdate` target the conflict cleanly (a previous attempt with `CREATE UNIQUE INDEX (whatsapp, COALESCE(tenant_id, ''))` couldn't be targeted by `onConflict`). `Blocklist` accepts a `tenantId?: string | null` option; `null`/undefined normalize to `''` so single-tenant deployments keep working without writing the field. All operations (`block`, `unblock`, `isBlocked`, `listBlocked`, `cleanup`) scope by the configured tenant. Cache keys are tenant-prefixed so blocks at tenant A don't mask checks at tenant B sharing an isolate.
+- **Recipe docs** — `docs/ESCALATION.md`, `docs/CONSENT.md`, `docs/REVIEW_QUEUE.md`, `docs/MULTI_TENANT_CRON.md`. Decision tree → setup → app-owned schemas → multi-tenant → anti-patterns, matching the shape of `docs/MULTI_TENANT.md`. README "Recipe docs" section indexes them.
+
+### Changed
+
+- `Agent` constructor accepts `reviewQueue?: AgentReviewQueue | null`. When set together with `mode === 'assisted'`, the queue intercepts; otherwise the v0.5 path runs.
+- `WhatsAppClient.sendText(to, body, { inReplyToWamid? })` accepts the new option and sets `context.message_id` on the payload when present.
+- `drainAll` is now a thin wrapper around `forEachTenant`. No behavior change for existing callers.
+
+### Tests
+
+- 792 → **830** tests passing across 66 files (38 new). Highlights:
+  - `review_queue.test.ts` — 14 tests covering enqueue / approve / reject / markSent state transitions, idempotency, editedText override, list filtering, countByStatus, Agent integration (assisted+queue gates send, assisted-without-queue preserves v0.5, autonomous bypasses queue entirely).
+  - `multi_tenant_dispatch_reviews.test.ts` — 5 tests covering happy-path dispatch, editedText vs aiText fallback, orphan rows (no tenantId), agentFor failures, pending rows untouched.
+  - `multi_tenant_for_each.test.ts` — 7 tests covering forEachTenant: enumerate errors, missing enumerate config, agentFor failures, fn throws, sync fn, drainAll delegation.
+  - `blocklist_tenant.test.ts` — 8 new tests covering tenant isolation across block / unblock / list / cleanup / cache.
+  - `whatsapp_client.test.ts` — 4 new tests covering `inReplyToWamid` context block.
+
+### Migration notes
+
+No breaking changes. Apply migrations `017_blocklist_tenant.sql` and `018_pending_reviews.sql` before deploying.
+
+If you've been running `mode: 'assisted'` with `EscalationStore` for after-the-fact reviews, set `reviewQueue` on the Agent to opt into the gated path. Without `reviewQueue`, v0.5 behavior is preserved exactly — migration is per-Agent.
+
+Single-tenant `Blocklist` deployments don't need to set `tenantId` — the migration writes `''` for existing rows and the class normalizes null/undefined to `''`. Multi-tenant deployments set `tenantId` per Agent (typical inside `MultiTenantAgentRegistry.buildAgent`).
+
 ## [0.7.0] — 2026-06-18
 
 ### Added

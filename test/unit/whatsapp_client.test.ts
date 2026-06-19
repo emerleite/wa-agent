@@ -110,4 +110,38 @@ describe('WhatsAppClient', () => {
 		const c = new WhatsAppClient({ endpoint: ENDPOINT, token: 'T' });
 		expect(await c.sendText('5551', 'hi')).toBe(false);
 	});
+
+	it('sendText with inReplyToWamid adds Meta context block', async () => {
+		const c = new WhatsAppClient({ endpoint: ENDPOINT, token: 'T' });
+		await c.sendText('5551', 'hi', { inReplyToWamid: 'wamid.prev_42' });
+		expect(calls[0]?.body).toMatchObject({
+			to: '+5551',
+			type: 'text',
+			text: { body: 'hi' },
+			context: { message_id: 'wamid.prev_42' },
+		});
+	});
+
+	it('sendText without inReplyToWamid does NOT include a context block', async () => {
+		const c = new WhatsAppClient({ endpoint: ENDPOINT, token: 'T' });
+		await c.sendText('5551', 'hi');
+		expect((calls[0]?.body as { context?: unknown }).context).toBeUndefined();
+	});
+
+	it('sendText with empty/null inReplyToWamid does NOT include a context block', async () => {
+		const c = new WhatsAppClient({ endpoint: ENDPOINT, token: 'T' });
+		await c.sendText('5551', 'hi', { inReplyToWamid: '' });
+		expect((calls[0]?.body as { context?: unknown }).context).toBeUndefined();
+		await c.sendText('5551', 'hi', { inReplyToWamid: null });
+		expect((calls[1]?.body as { context?: unknown }).context).toBeUndefined();
+	});
+
+	it('sendText with both previewUrl and inReplyToWamid preserves both', async () => {
+		const c = new WhatsAppClient({ endpoint: ENDPOINT, token: 'T' });
+		await c.sendText('5551', 'hi http://x', { previewUrl: true, inReplyToWamid: 'wamid.X' });
+		expect(calls[0]?.body).toMatchObject({
+			text: { preview_url: true, body: 'hi http://x' },
+			context: { message_id: 'wamid.X' },
+		});
+	});
 });

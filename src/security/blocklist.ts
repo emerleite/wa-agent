@@ -14,14 +14,26 @@
  *
  * From v0.2 onward: backed by Drizzle ORM.
  */
-import { and, desc, eq, isNull, gt, lt, or, sql } from 'drizzle-orm';
-import type { DB } from '../db/client.js';
+import { and, desc, eq, gt, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
+import { normalizeDb, type DB } from '../db/client.js';
 import { blockedNumbers, type BlockedNumberRow } from '../db/schema/blocklist.js';
 
 export interface BlocklistOptions {
-	db: DB;
+	/**
+	 * D1 binding OR a pre-built Drizzle client (any schema). v0.7+:
+	 * normalized internally.
+	 */
+	db: D1Database | DB;
 	/** Cache TTL in ms. Default 5 minutes. Set 0 to disable caching. */
 	cacheTtlMs?: number;
+	/**
+	 * v0.8: tenant-scope every block / check / list / cleanup operation.
+	 * Single-tenant deployments leave this unset (or null) — the IS NULL
+	 * filter preserves their behavior bit-for-bit. Multi-tenant deployments
+	 * pass the tenantId so a block at tenant A doesn't bleed into checks
+	 * at tenant B. Requires migration 017_blocklist_tenant.sql.
+	 */
+	tenantId?: string | null;
 }
 
 export interface BlockArgs {
@@ -47,12 +59,37 @@ interface CacheEntry {
 export class Blocklist {
 	readonly db: DB;
 	readonly cacheTtlMs: number;
+	/**
+	 * Effective tenant scope for this Blocklist. Single-tenant deployments
+	 * see `''` (empty string) — matches the migration's NOT NULL default.
+	 * Multi-tenant deployments see the configured tenantId.
+	 */
+	readonly tenantId: string;
 	private readonly cache = new Map<string, CacheEntry>();
 
-	constructor({ db, cacheTtlMs = 5 * 60 * 1000 }: BlocklistOptions) {
+	constructor({ db, cacheTtlMs = 5 * 60 * 1000, tenantId = null }: BlocklistOptions) {
 		if (!db) throw new Error('Blocklist: db required');
-		this.db = db;
+		this.db = normalizeDb(db);
 		this.cacheTtlMs = cacheTtlMs;
+		// Normalize null/undefined → '' so the composite PK works without
+		// SQLite's "NULLs are not equal" UNIQUE quirk.
+		this.tenantId = tenantId ?? '';
+	}
+
+	/**
+	 * SQL fragment that scopes a query to this Blocklist's tenantId.
+	 * Centralized so isBlocked / list / cleanup stay consistent.
+	 */
+	private tenantScopeFilter(): SQL {
+		return eq(blockedNumbers.tenantId, this.tenantId);
+	}
+
+	/**
+	 * Cache key includes the tenantId so blocks at tenant A don't mask
+	 * checks at tenant B sharing the same isolate.
+	 */
+	private cacheKey(whatsapp: string): string {
+		return this.tenantId === '' ? whatsapp : `${this.tenantId}:${whatsapp}`;
 	}
 
 	/**
@@ -69,7 +106,13 @@ export class Blocklist {
 			const r = await this.db
 				.select({ one: sql`1` })
 				.from(blockedNumbers)
-				.where(and(eq(blockedNumbers.whatsapp, whatsapp), or(isNull(blockedNumbers.expiresAt), gt(blockedNumbers.expiresAt, sql`datetime('now')`))))
+				.where(
+					and(
+						eq(blockedNumbers.whatsapp, whatsapp),
+						this.tenantScopeFilter(),
+						or(isNull(blockedNumbers.expiresAt), gt(blockedNumbers.expiresAt, sql`datetime('now')`)),
+					),
+				)
 				.limit(1);
 			const blocked = r.length > 0;
 			this.cachePut(whatsapp, blocked);
@@ -86,11 +129,15 @@ export class Blocklist {
 	 */
 	async block({ whatsapp, reason, blockedBy = null, expiresAt = null, notes = null }: BlockArgs): Promise<void> {
 		if (!whatsapp || !reason) throw new Error('Blocklist.block: whatsapp + reason required');
+		// v0.8: scoped INSERT — the unique key is (whatsapp, COALESCE(tenant_id, ''))
+		// per migration 017. Existing row at this scope is overwritten; rows for
+		// other tenants stay untouched. Drizzle's onConflict targets the unique
+		// index name (idx_blocked_numbers_pk).
 		await this.db
 			.insert(blockedNumbers)
-			.values({ whatsapp, reason, blockedBy, expiresAt, notes })
+			.values({ whatsapp, tenantId: this.tenantId, reason, blockedBy, expiresAt, notes })
 			.onConflictDoUpdate({
-				target: blockedNumbers.whatsapp,
+				target: [blockedNumbers.whatsapp, blockedNumbers.tenantId],
 				set: {
 					reason,
 					blockedBy,
@@ -107,7 +154,10 @@ export class Blocklist {
 	 */
 	async unblock(whatsapp: string): Promise<boolean> {
 		if (!whatsapp) return false;
-		const r = await this.db.delete(blockedNumbers).where(eq(blockedNumbers.whatsapp, whatsapp)).returning({ whatsapp: blockedNumbers.whatsapp });
+		const r = await this.db
+			.delete(blockedNumbers)
+			.where(and(eq(blockedNumbers.whatsapp, whatsapp), this.tenantScopeFilter()))
+			.returning({ whatsapp: blockedNumbers.whatsapp });
 		this.cacheBust(whatsapp);
 		return r.length > 0;
 	}
@@ -116,11 +166,18 @@ export class Blocklist {
 	 * List blocked numbers for admin UI / triage. Defaults to active only.
 	 */
 	async listBlocked({ activeOnly = true, limit = 200 }: ListBlockedOptions = {}): Promise<BlockedNumberRow[]> {
-		const q = this.db.select().from(blockedNumbers).orderBy(desc(blockedNumbers.blockedAt)).limit(limit);
-		if (activeOnly) {
-			return await q.where(or(isNull(blockedNumbers.expiresAt), gt(blockedNumbers.expiresAt, sql`datetime('now')`)));
-		}
-		return await q;
+		const where = activeOnly
+			? and(
+					this.tenantScopeFilter(),
+					or(isNull(blockedNumbers.expiresAt), gt(blockedNumbers.expiresAt, sql`datetime('now')`)),
+				)
+			: this.tenantScopeFilter();
+		return await this.db
+			.select()
+			.from(blockedNumbers)
+			.where(where)
+			.orderBy(desc(blockedNumbers.blockedAt))
+			.limit(limit);
 	}
 
 	/**
@@ -130,7 +187,13 @@ export class Blocklist {
 	async cleanup(): Promise<number> {
 		const r = await this.db
 			.delete(blockedNumbers)
-			.where(and(sql`${blockedNumbers.expiresAt} IS NOT NULL`, lt(blockedNumbers.expiresAt, sql`datetime('now')`)))
+			.where(
+				and(
+					this.tenantScopeFilter(),
+					sql`${blockedNumbers.expiresAt} IS NOT NULL`,
+					lt(blockedNumbers.expiresAt, sql`datetime('now')`),
+				),
+			)
 			.returning({ whatsapp: blockedNumbers.whatsapp });
 		// Bust cache for anything we deleted so they're treated as unblocked immediately.
 		for (const row of r) this.cacheBust(row.whatsapp);
@@ -144,10 +207,11 @@ export class Blocklist {
 
 	private cacheGet(whatsapp: string): boolean | null {
 		if (this.cacheTtlMs === 0) return null;
-		const hit = this.cache.get(whatsapp);
+		const key = this.cacheKey(whatsapp);
+		const hit = this.cache.get(key);
 		if (!hit) return null;
 		if (Date.now() > hit.expiresAt) {
-			this.cache.delete(whatsapp);
+			this.cache.delete(key);
 			return null;
 		}
 		return hit.blocked;
@@ -155,10 +219,10 @@ export class Blocklist {
 
 	private cachePut(whatsapp: string, blocked: boolean): void {
 		if (this.cacheTtlMs === 0) return;
-		this.cache.set(whatsapp, { blocked, expiresAt: Date.now() + this.cacheTtlMs });
+		this.cache.set(this.cacheKey(whatsapp), { blocked, expiresAt: Date.now() + this.cacheTtlMs });
 	}
 
 	private cacheBust(whatsapp: string): void {
-		this.cache.delete(whatsapp);
+		this.cache.delete(this.cacheKey(whatsapp));
 	}
 }

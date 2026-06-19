@@ -36,6 +36,7 @@
  */
 import type { Agent } from '../agent.js';
 import type { InboundEnvelope } from '../types.js';
+import type { AgentReviewQueue } from '../review/review_queue.js';
 
 export interface AgentCache {
 	get(tenantId: string): Agent | null;
@@ -148,9 +149,42 @@ export class MultiTenantAgentRegistry {
 	 * many drains were scheduled, useful for cron-handler logs / metrics.
 	 */
 	async drainAll(env: unknown, waitUntil: (p: Promise<unknown>) => void): Promise<{ scheduled: number }> {
+		const { scheduled } = await this.forEachTenant(env, waitUntil, async (agent) => {
+			await agent.drain();
+			await agent.queue.cleanup();
+		});
+		return { scheduled };
+	}
+
+	/**
+	 * Generalization of `drainAll`: iterate every tenant from
+	 * `enumerateTenants`, resolve each Agent (cache-friendly), and schedule
+	 * the user-supplied `fn(agent, tenantId)` via `waitUntil`. Use for any
+	 * per-tenant cron — Broadcast, ReEngagement, content generation, slot
+	 * delivery — that the framework doesn't already wrap.
+	 *
+	 *   await registry.forEachTenant(env, ctx.waitUntil, async (agent, tid) => {
+	 *     await new Broadcast({ client: agent.client, db: agent.db, channel: 'devotional' })
+	 *       .run({ send: ... });
+	 *   });
+	 *
+	 * Like `drainAll`, this requires `enumerateTenants` at construction and
+	 * catches per-tenant failures so one bad tenant can't stop the cron.
+	 *
+	 * Returns `{ scheduled, errored }` — `scheduled` counts agents the
+	 * waitUntil callback was invoked for; `errored` counts tenants where
+	 * `agentFor` failed before the fn was reached. The fn's own throws are
+	 * caught inside the waitUntil closure and counted toward neither — they
+	 * surface in the console log.
+	 */
+	async forEachTenant(
+		env: unknown,
+		waitUntil: (p: Promise<unknown>) => void,
+		fn: (agent: Agent, tenantId: string) => Promise<void> | void,
+	): Promise<{ scheduled: number; errored: number }> {
 		if (!this.enumerateTenants) {
 			throw new Error(
-				'MultiTenantAgentRegistry.drainAll: enumerateTenants must be configured at construction',
+				'MultiTenantAgentRegistry.forEachTenant: enumerateTenants must be configured at construction',
 			);
 		}
 		let tenantIds: string[];
@@ -158,26 +192,86 @@ export class MultiTenantAgentRegistry {
 			tenantIds = await this.enumerateTenants(env);
 		} catch (e) {
 			console.error('[MultiTenantAgentRegistry] enumerateTenants threw:', e instanceof Error ? e.message : e);
-			return { scheduled: 0 };
+			return { scheduled: 0, errored: 0 };
 		}
 		let scheduled = 0;
+		let errored = 0;
 		for (const tenantId of tenantIds) {
+			let agent: Agent;
 			try {
-				const agent = await this.agentFor(env, tenantId);
-				waitUntil(
-					(async () => {
-						try {
-							await agent.drain();
-							await agent.queue.cleanup();
-						} catch (e) {
-							console.error(`[MultiTenantAgentRegistry] drain ${tenantId} failed:`, e instanceof Error ? e.message : e);
-						}
-					})(),
-				);
-				scheduled += 1;
+				agent = await this.agentFor(env, tenantId);
 			} catch (e) {
 				console.error(`[MultiTenantAgentRegistry] agentFor ${tenantId} failed:`, e instanceof Error ? e.message : e);
+				errored += 1;
+				continue;
 			}
+			waitUntil(
+				(async () => {
+					try {
+						await fn(agent, tenantId);
+					} catch (e) {
+						console.error(`[MultiTenantAgentRegistry] forEachTenant ${tenantId} fn failed:`, e instanceof Error ? e.message : e);
+					}
+				})(),
+			);
+			scheduled += 1;
+		}
+		return { scheduled, errored };
+	}
+
+	/**
+	 * Cron helper for `assisted` mode: pick up every approved-but-not-yet-sent
+	 * row from the review queue and dispatch via the right tenant's Agent.
+	 * The reviewQueue is single (shared across tenants) — its `tenant_id`
+	 * column scopes rows, and this helper groups approved rows per tenant
+	 * before scheduling the per-tenant sends.
+	 *
+	 *   scheduled: async (_event, env, ctx) => {
+	 *     await registry.dispatchApprovedReviews(env, reviewQueue, (p) => ctx.waitUntil(p));
+	 *   }
+	 *
+	 * Per-row send failures are caught + logged so one stuck row doesn't
+	 * block the cron. Returns `{ scheduled }` for handler-side metrics.
+	 *
+	 * Apps without multi-tenant routing can use the same pattern via a
+	 * single-Agent cron — call `queue.list({ status: 'approved' })` and
+	 * dispatch via `agent.client.sendText` directly.
+	 */
+	async dispatchApprovedReviews(
+		env: unknown,
+		reviewQueue: AgentReviewQueue,
+		waitUntil: (p: Promise<unknown>) => void,
+	): Promise<{ scheduled: number }> {
+		const approved = await reviewQueue.list({ status: 'approved', limit: 500 });
+		let scheduled = 0;
+		for (const row of approved) {
+			const tenantId = row.tenantId;
+			if (!tenantId) {
+				// Single-tenant row; this multi-tenant helper can't dispatch it.
+				// Apps without multi-tenant routing should handle that path
+				// themselves (see the docstring).
+				console.warn(`[MultiTenantAgentRegistry] approved review ${row.id} has no tenantId — skipping`);
+				continue;
+			}
+			let agent: Agent;
+			try {
+				agent = await this.agentFor(env, tenantId);
+			} catch (e) {
+				console.error(`[MultiTenantAgentRegistry] dispatch ${row.id}: agentFor ${tenantId} failed:`, e instanceof Error ? e.message : e);
+				continue;
+			}
+			waitUntil(
+				(async () => {
+					try {
+						const body = row.editedText ?? row.aiText;
+						const ok = await agent.client.sendText(row.whatsapp, body);
+						if (ok) await reviewQueue.markSent(row.id);
+					} catch (e) {
+						console.error(`[MultiTenantAgentRegistry] dispatch ${row.id} send failed:`, e instanceof Error ? e.message : e);
+					}
+				})(),
+			);
+			scheduled += 1;
 		}
 		return { scheduled };
 	}

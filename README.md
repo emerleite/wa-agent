@@ -780,6 +780,16 @@ export default {
 - [`examples/full-bot/`](./examples/full-bot) — every primitive in one bot: AI with reply-enricher CTA footer, summarization, transcription, devotional broadcast, daily yes/no, 21-day plan, TTS narration cached in R2, payment-link-backed upsell, `link <code>` account redemption, opportunistic free-tier tip via `afterReply`, `ConsentStore` gate before AI fallback.
 - [`examples/multi-tenant-bot/`](./examples/multi-tenant-bot) — BSP-style: one Worker serves many WhatsApp numbers via `MultiTenantAgentRegistry` (v0.6+) + `drainAll` cron (v0.7+). About 130 lines. Pair with `docs/MULTI_TENANT.md`.
 
+## Recipe docs
+
+Per-primitive deep-dives — decision trees, setup, schema flexibility, anti-patterns:
+
+- [`docs/MULTI_TENANT.md`](./docs/MULTI_TENANT.md) — `MultiTenantAgentRegistry` routing, signature verify, single → multi migration.
+- [`docs/MULTI_TENANT_CRON.md`](./docs/MULTI_TENANT_CRON.md) — `drainAll` / `forEachTenant` / `dispatchApprovedReviews` cron patterns.
+- [`docs/ESCALATION.md`](./docs/ESCALATION.md) — `EscalationStore` + notifiers (Slack / HTTP / custom), app-owned schemas.
+- [`docs/CONSENT.md`](./docs/CONSENT.md) — `ConsentStore` + `consentGate` pipeline integration, re-grant flows.
+- [`docs/REVIEW_QUEUE.md`](./docs/REVIEW_QUEUE.md) — `AgentReviewQueue` (v0.8) — gates assisted-mode sends on human approval.
+
 ## Feature audit — bibliafala → wa-agent
 
 The framework was extracted from a production bot ([bibliafala](https://bibliafala.com)). Below is the complete mapping of source-of-origin → framework module, including what was deliberately left out.
@@ -975,6 +985,15 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 ## Status
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
+
+### v0.8.0 — additive release, no breaking changes from 0.7:
+
+- **`AgentReviewQueue`** (migration `018_pending_reviews.sql`) — closes the loop opened by v0.5's `assisted` mode. Where assisted previously recorded AI turns *after* sending (audit-only), `assisted` + `reviewQueue` now intercepts the reply BEFORE send and parks it as a pending row for human approval. `approve(id, { editedText?, approvedBy? })` flips status to `approved`; a cron picks it up and dispatches. `reject(id)` drops silently. `markSent` only transitions from `approved` — guards against bypass. Same column-map / omit / extra-columns flex as `EscalationStore` / `ConsentStore`. The Agent's existing `recordAssistedReview` path is still used when `reviewQueue` is null — v0.5 behavior preserved bit-for-bit.
+- **`MultiTenantAgentRegistry.forEachTenant(env, waitUntil, fn)`** — generalization of `drainAll`. Iterates every tenant, calls `agentFor`, schedules `fn(agent, tenantId)` via `waitUntil`. Per-tenant failures caught. `drainAll` reduces to a one-line wrapper around it. Use directly for window dispatch, content refresh, or any other per-tenant cron task that isn't queue drain.
+- **`MultiTenantAgentRegistry.dispatchApprovedReviews(env, queue, waitUntil)`** — cron helper that pulls every approved-but-not-yet-sent review row, routes via the tenant's Agent, sends, and calls `markSent` on success. Per-row send failures are caught. Single-tenant apps call `queue.list({ status: 'approved' })` + `sendText` directly.
+- **`ReplyHelper.replyTo(wamid, body, opts?)` + `text` accepts `inReplyToWamid`** — outbound reply context. Sends with Meta's `context.message_id` field so the user sees a threaded "reply to message" bubble. Useful for review-queue dispatches, "thanks for the photo" responses, async replies arriving after another message.
+- **`Blocklist` tenant scoping** (migration `017_blocklist_tenant.sql`) — `blocked_numbers` table gets a composite `(whatsapp, tenant_id)` primary key (`tenant_id NOT NULL DEFAULT ''`). `Blocklist` accepts a `tenantId` option; block / unblock / list / cleanup all scope by it. Cache keys are tenant-prefixed so blocks at tenant A don't mask checks at tenant B sharing an isolate. Single-tenant deployments leave it unset and behave bit-for-bit as in v0.7.
+- **Recipe docs** — `docs/ESCALATION.md`, `docs/CONSENT.md`, `docs/REVIEW_QUEUE.md`, `docs/MULTI_TENANT_CRON.md`. Decision tree → setup → app-owned schemas → anti-patterns, same shape as `docs/MULTI_TENANT.md`.
 
 ### v0.7.0 — additive release, no breaking changes from 0.6:
 

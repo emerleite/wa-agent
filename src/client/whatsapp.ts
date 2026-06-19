@@ -41,14 +41,22 @@ export class WhatsAppClient {
 		this.authString = `Bearer ${token}`;
 	}
 
-	async sendText(to: string, body: string, { previewUrl = false }: { previewUrl?: boolean } = {}): Promise<boolean> {
-		return this.send({
+	async sendText(
+		to: string,
+		body: string,
+		{ previewUrl = false, inReplyToWamid }: { previewUrl?: boolean; inReplyToWamid?: string | null } = {},
+	): Promise<boolean> {
+		const payload: Record<string, unknown> = {
 			messaging_product: 'whatsapp',
 			recipient_type: 'individual',
 			to: normalize(to),
 			type: 'text',
 			text: { preview_url: previewUrl, body },
-		});
+		};
+		// v0.8: outbound context — when set, WhatsApp threads the reply
+		// visually under the original message in the user's chat UI.
+		if (inReplyToWamid) payload.context = { message_id: inReplyToWamid };
+		return this.send(payload);
 	}
 
 	async sendButtons(to: string, { body, footer = null, buttons }: ButtonsPayload): Promise<boolean> {
