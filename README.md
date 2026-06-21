@@ -987,6 +987,10 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
 
+### v0.9.1 — patch release (closes one bibliafala-adoption gap):
+
+- **`BotSendPacing`** + migration `020_bot_send_log.sql` — cross-category pacing for bot-initiated sends. `canSend(whatsapp, { category, minGapMinutes, dailyCap })` enforces (1) min-gap across categories (default 60 min) and (2) per-category or total daily cap. `recordSent(whatsapp, category)` after dispatch. Multi-tenant scoping, same columnMap/omit/extra flex as the v0.6+ store family. Fail-open on D1 errors.
+
 ### v0.9.0 — additive release, no breaking changes from 0.8:
 
 - **`AIRouter`** — multi-provider LLM dispatch. Walks an ordered chain per call, skips OPEN-breaker providers, enforces wall-clock budget across the chain, logs every attempt. `resolveChain(task)` callback so apps source the chain from env / D1 / KV / constants. Distinct from `AIClient.chat()` (conversational turn) — `route()` is a single LLM call. `envChainResolver(env)` helper covers the `AI_CHAIN_${TASK}` env var pattern in one line.

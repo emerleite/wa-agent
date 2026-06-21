@@ -17,3 +17,4 @@ export * from './account_links.js';
 export * from './escalations.js';
 export * from './pending_reviews.js';
 export * from './ai_call_log.js';
+export * from './bot_send_log.js';

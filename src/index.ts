@@ -50,6 +50,15 @@ export type { BroadcastResult } from './scheduler/broadcast.js';
 export { ReEngagement } from './scheduler/reengagement.js';
 export { SlotDelivery, weightedPick } from './scheduler/slot_delivery.js';
 export { RateCappedDispatcher } from './scheduler/rate_capped_dispatcher.js';
+export { BotSendPacing, DEFAULT_PACING_COLUMNS } from './scheduler/bot_send_pacing.js';
+export type {
+	BotSendPacingOptions,
+	PacingField,
+	CanSendOptions,
+	RecordSentOptions,
+	BotSendRow,
+} from './scheduler/bot_send_pacing.js';
+export type { BotSendLogRow } from './db/schema/bot_send_log.js';
 export type {
 	RateCappedDispatcherOptions,
 	DispatchResult,

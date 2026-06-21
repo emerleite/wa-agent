@@ -2,6 +2,20 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.9.1] — 2026-06-21
+
+### Added
+
+- **`BotSendPacing`** + migration `020_bot_send_log.sql` — cross-category pacing primitive for bot-initiated (cron-triggered, non-reactive) sends. Closes the one real adoption gap identified in the bibliafala readiness audit. Two configurable gates per `canSend(whatsapp, opts)` call: (1) minimum gap between any two sends to the same user across categories (default 60 min, set 0/null to disable) and (2) per-category daily cap (e.g. ads ≤3/day) or total daily cap (when `category` is unset). `recordSent(whatsapp, category)` writes one row post-dispatch. Visibility helpers `countSentToday(whatsapp, category?)` and `countByCategoryToday(whatsapp)` for dashboards. Multi-tenant scoping via `tenantId`. Same `tableName` + `columnMap` + `omitColumns` + `allowedExtraColumns` flexibility as the rest of the v0.6+ store family. Fail-open on D1 errors — pacing is UX-quality, not a safety boundary.
+
+### Tests
+
+- 891 → **908** tests passing across 71 files (17 new). `bot_send_pacing.test.ts` covers: construction validation, recordSent + countSentToday + countByCategoryToday, both gate types in isolation and together, total-cap vs category-cap modes, multi-tenant scoping (per-tenant cap isolation), extraColumns allowlist.
+
+### Migration notes
+
+No breaking changes. Apply migration `020_bot_send_log.sql` before deploying with `BotSendPacing` set. Apps that don't need it ignore the primitive — nothing in core changed.
+
 ## [0.9.0] — 2026-06-20
 
 ### Added
