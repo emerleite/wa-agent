@@ -2,6 +2,30 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.9.0] — 2026-06-20
+
+### Added
+
+- **`AIRouter`** — multi-provider LLM dispatch layer. Walks an ordered chain per call, skips providers whose `CircuitBreaker` is OPEN, enforces a wall-clock budget across the chain, and logs every attempt (success / failure / skip) to an optional `AICallLedger`. `resolveChain(task)` is a callback so apps source the chain from env vars, D1, KV, or hard-coded constants. Distinct from the existing `AIClient.chat()` (conversational-turn level): `AIRouter.route()` is a single LLM call, and a custom `AIClient` can wrap it for failover-aware conversations. Helper `envChainResolver(env)` covers the common `env.AI_CHAIN_${TASK}` pattern in one line.
+- **`CircuitBreaker`** — per-provider three-state machine (CLOSED / OPEN / HALF_OPEN) used by `AIRouter`. Per-error-kind thresholds (rateLimit/serverError/timeout buckets) so a 429 trips fast and recovers fast while 5xx/network trip slower. In-isolate state (Map, no KV/cross-isolate sync) — Workers recycle every few minutes so breakers self-heal without coordination overhead. Each consecutive trip doubles the OPEN window up to `backoffMaxMs`. `metrics()` snapshot for dashboards.
+- **`LLMProvider` interface + `OpenAICompatProvider` + `WorkersAIProvider`** — low-level single-call abstraction (`run({ system, user, maxTokens, temperature, timeoutMs })`). `OpenAICompatProvider` is a base class for any OpenAI Chat-Completions-shaped API (Groq, Cerebras, OpenRouter, DeepInfra, Maritaca, Azure OpenAI) — apps construct or subclass with `{ url, apiKey, model, extraHeaders, extraBody }`. `WorkersAIProvider` wraps the in-process `env.AI` binding. Both return a uniform `{ ok, response, tokensIn, tokensOut, httpStatus }` (success) / `{ ok: false, errorKind, errorMessage }` (failure) so the router classifies uniformly. Error kinds: `'429' | '5xx' | 'network' | 'timeout' | 'parse' | 'config'`.
+- **`AICallLedger`** + migration `019_ai_call_log.sql` — persistent per-call ledger. One row per provider attempt (multiple per user-facing response when the chain walks past failures). Default schema: `task, provider, model, status, http_status, latency_ms, tokens_in, tokens_out, est_cost_micro_usd, error_kind, error_message, tenant_id, whatsapp`. Same `tableName` + `columnMap` + `omitColumns` + `allowedExtraColumns` flexibility as `EscalationStore` / `ConsentStore` / `AgentReviewQueue`. Cost is integer micro-USD (1/1_000_000 USD) so aggregations over millions of rows stay precise; the router does NOT estimate cost — pass `estimateCost(provider, tokensIn, tokensOut)` on construction (typically backed by `LLMCostCalculator`). Analytics helpers `countByStatus(status, {task, tenantId, since})` and `costByProvider({task, tenantId, since})`.
+- **`docs/AI_ROUTER.md`** — decision tree (when to install over the existing `OpenAIAssistant`), setup, provider authoring (subclassing for OpenRouter-style quirks), chain configuration sources, circuit-breaker tuning, multi-tenant patterns, budgets, anti-patterns.
+
+### Tests
+
+- 830 → **891** tests passing across 70 files (61 new).
+  - `circuit_breaker.test.ts` — 17 tests covering CLOSED/OPEN/HALF_OPEN transitions, per-bucket thresholds, exponential backoff cap, metrics, custom config.
+  - `llm_provider.test.ts` — 15 tests covering success/failure classification, AbortController timeouts, missing apiKey, Workers AI binding edge cases.
+  - `ai_call_log.test.ts` — 13 integration tests covering CRUD, list filters, `countByStatus`, `costByProvider`, `extraColumns` allowlist.
+  - `ai_router.test.ts` — 16 integration tests covering chain walking, breaker integration, ledger writes (including `skipped_open` / `skipped_budget` rows), `estimateCost` forwarding, ledger.record failure resilience, `envChainResolver`.
+
+### Migration notes
+
+No breaking changes. Apply migration `019_ai_call_log.sql` before deploying with `AICallLedger` set.
+
+Existing apps using `OpenAIAssistant` keep working with no changes. `AIRouter` is opt-in and orthogonal — apps adopt it when they want multi-provider failover or per-call cost dashboards. The framework's existing `LLMCostCalculator` + `DEFAULT_PRICE_TABLE` remain the recommended cost-math helpers; pair with `AICallLedger`'s `estimateCost` callback to wire prices into the ledger.
+
 ## [0.8.0] — 2026-06-19
 
 ### Added

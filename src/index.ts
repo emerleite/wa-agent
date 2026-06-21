@@ -191,6 +191,47 @@ export type {
 	ConsentWhereExtra,
 } from './consent/consent_store.js';
 
+// AI provider layer (v0.9) — multi-provider routing with circuit breaker + ledger
+export { CircuitBreaker } from './ai/circuit_breaker.js';
+export type {
+	CircuitState,
+	CircuitErrorKind,
+	CircuitBucketConfig,
+	CircuitBreakerConfig,
+	CircuitMetrics,
+} from './ai/circuit_breaker.js';
+export { OpenAICompatProvider, WorkersAIProvider } from './ai/llm_provider.js';
+export type {
+	LLMProvider,
+	ProviderRunArgs,
+	ProviderResult,
+	ProviderSuccess,
+	ProviderFailure,
+	ProviderErrorKind,
+	OpenAICompatProviderOptions,
+	WorkersAIProviderOptions,
+	WorkersAIBinding,
+} from './ai/llm_provider.js';
+export { AICallLedger, DEFAULT_CALL_LOG_COLUMNS } from './ai/ai_call_log.js';
+export type {
+	AICallLedgerOptions,
+	CallField,
+	CallStatus,
+	CallRow,
+	RecordCallArgs,
+	ListCallsOptions,
+} from './ai/ai_call_log.js';
+export type { AICallLogRow } from './db/schema/ai_call_log.js';
+export { AIRouter, envChainResolver } from './ai/router.js';
+export type {
+	AIRouterOptions,
+	RouteArgs,
+	RouteResult,
+	RouteSuccess,
+	RouteFailure,
+	ChainAttempt,
+} from './ai/router.js';
+
 // Human-review queue (v0.8 — closes the assisted-mode loop)
 export { AgentReviewQueue, DEFAULT_REVIEW_COLUMNS } from './review/review_queue.js';
 export type {

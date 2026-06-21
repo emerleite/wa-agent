@@ -789,6 +789,7 @@ Per-primitive deep-dives — decision trees, setup, schema flexibility, anti-pat
 - [`docs/ESCALATION.md`](./docs/ESCALATION.md) — `EscalationStore` + notifiers (Slack / HTTP / custom), app-owned schemas.
 - [`docs/CONSENT.md`](./docs/CONSENT.md) — `ConsentStore` + `consentGate` pipeline integration, re-grant flows.
 - [`docs/REVIEW_QUEUE.md`](./docs/REVIEW_QUEUE.md) — `AgentReviewQueue` (v0.8) — gates assisted-mode sends on human approval.
+- [`docs/AI_ROUTER.md`](./docs/AI_ROUTER.md) — `AIRouter` + `CircuitBreaker` + `AICallLedger` (v0.9) — multi-provider failover with per-call observability.
 
 ## Feature audit — bibliafala → wa-agent
 
@@ -985,6 +986,14 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 ## Status
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
+
+### v0.9.0 — additive release, no breaking changes from 0.8:
+
+- **`AIRouter`** — multi-provider LLM dispatch. Walks an ordered chain per call, skips OPEN-breaker providers, enforces wall-clock budget across the chain, logs every attempt. `resolveChain(task)` callback so apps source the chain from env / D1 / KV / constants. Distinct from `AIClient.chat()` (conversational turn) — `route()` is a single LLM call. `envChainResolver(env)` helper covers the `AI_CHAIN_${TASK}` env var pattern in one line.
+- **`CircuitBreaker`** — per-provider three-state machine (CLOSED/OPEN/HALF_OPEN) used by `AIRouter`. Per-error-kind thresholds: 429s trip fast + recover fast; 5xx/network/parse trip slower; timeout sits between. Exponential backoff capped per bucket. In-isolate state (no KV/cross-isolate sync) — Workers recycle every few minutes so the cost of cold-isolate relearning is bounded. `metrics()` for dashboards.
+- **`LLMProvider` interface + `OpenAICompatProvider` + `WorkersAIProvider`** — single-call abstraction. `OpenAICompatProvider` base class for any OpenAI Chat-Completions-shaped API (Groq, Cerebras, OpenRouter, DeepInfra, Maritaca, Azure OpenAI) — apps construct or subclass with `{ url, apiKey, model, extraHeaders, extraBody }`. `WorkersAIProvider` wraps the in-process `env.AI` binding for in-isolate backstop. Uniform result shape so the router classifies success/failure identically across providers.
+- **`AICallLedger`** + migration `019_ai_call_log.sql` — persistent per-call ledger. One row per provider attempt. Default schema captures task, provider, model, status, tokens, latency, micro-USD cost, error kind/message, tenant, whatsapp. Same `tableName` + `columnMap` + `omitColumns` + `allowedExtraColumns` flex as `EscalationStore` / `ConsentStore` / `AgentReviewQueue`. Cost is integer µUSD so aggregations stay precise; the router does not estimate — pass `estimateCost(provider, tokensIn, tokensOut)` to the router and it forwards. Analytics helpers `countByStatus`, `costByProvider`.
+- **`docs/AI_ROUTER.md`** — decision tree, setup, provider authoring, chain sources, breaker tuning, multi-tenant, budgets, anti-patterns.
 
 ### v0.8.0 — additive release, no breaking changes from 0.7:
 
