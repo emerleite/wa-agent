@@ -164,6 +164,58 @@ describe('SequentialPlan', () => {
 			expect((await plans.usersForDelivery({ minIntervalHours: 20 })).length).toBe(0);
 			expect((await plans.usersForDelivery({ minIntervalHours: 1 })).length).toBe(1);
 		});
+
+		describe('snooze gate', () => {
+			it('snooze() returns false when no active enrollment exists', async () => {
+				expect(await plans.snooze('5560', 1, '2099-12-31 00:00:00')).toBe(false);
+			});
+
+			it('snooze() sets snoozed_until on the active enrollment', async () => {
+				await plans.enroll('5560', 1);
+				const ok = await plans.snooze('5560', 1, '2099-12-31 00:00:00');
+				expect(ok).toBe(true);
+				const e = await plans.getActiveEnrollment('5560');
+				expect(e?.snoozedUntil).toBe('2099-12-31 00:00:00');
+			});
+
+			it('usersForDelivery excludes snoozed users (snoozed_until in the future)', async () => {
+				await eligible('5561');
+				await plans.enroll('5561', 1);
+				await plans.snooze('5561', 1, '2099-12-31 00:00:00');
+				const due = await plans.usersForDelivery();
+				expect(due.find((u) => u.whatsapp === '5561')).toBeUndefined();
+			});
+
+			it('usersForDelivery includes users whose snooze has already expired', async () => {
+				await eligible('5562');
+				await plans.enroll('5562', 1);
+				await plans.snooze('5562', 1, '2000-01-01 00:00:00');
+				const due = await plans.usersForDelivery();
+				expect(due.find((u) => u.whatsapp === '5562')).toBeDefined();
+			});
+
+			it('markDelivered clears the snooze (one-day snooze cannot become permanent)', async () => {
+				await eligible('5563');
+				await plans.enroll('5563', 1);
+				await plans.snooze('5563', 1, '2099-12-31 00:00:00');
+				await plans.markDelivered('5563', 1, 1);
+				const e = await plans.getActiveEnrollment('5563');
+				expect(e?.snoozedUntil).toBeNull();
+			});
+
+			it('clearSnooze() explicitly drops the snooze', async () => {
+				await plans.enroll('5564', 1);
+				await plans.snooze('5564', 1, '2099-12-31 00:00:00');
+				expect(await plans.clearSnooze('5564', 1)).toBe(true);
+				const e = await plans.getActiveEnrollment('5564');
+				expect(e?.snoozedUntil).toBeNull();
+			});
+
+			it('snooze requires untilIso', async () => {
+				await plans.enroll('5565', 1);
+				await expect(plans.snooze('5565', 1, '')).rejects.toThrow();
+			});
+		});
 	});
 
 	it('markDelivered emits plan_day_delivered when emit is wired', async () => {

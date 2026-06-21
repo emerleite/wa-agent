@@ -987,6 +987,10 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
 
+### v0.9.2 — patch release (closes the last bibliafala-adoption gap):
+
+- **`SequentialPlan.snooze(whatsapp, planId, untilIso)`** + `clearSnooze` + migration `021_user_plans_snooze.sql`. `usersForDelivery` gates on `snoozed_until > now`; `markDelivered` auto-clears the snooze so a one-day defer can never become a permanent pause. `getActiveEnrollment` exposes the field for handler-side checks.
+
 ### v0.9.1 — patch release (closes one bibliafala-adoption gap):
 
 - **`BotSendPacing`** + migration `020_bot_send_log.sql` — cross-category pacing for bot-initiated sends. `canSend(whatsapp, { category, minGapMinutes, dailyCap })` enforces (1) min-gap across categories (default 60 min) and (2) per-category or total daily cap. `recordSent(whatsapp, category)` after dispatch. Multi-tenant scoping, same columnMap/omit/extra flex as the v0.6+ store family. Fail-open on D1 errors.

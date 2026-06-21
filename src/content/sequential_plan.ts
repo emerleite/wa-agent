@@ -95,6 +95,7 @@ export class SequentialPlan {
 				completedAt: userPlans.completedAt,
 				isActive: userPlans.isActive,
 				lastDeliveredAt: userPlans.lastDeliveredAt,
+				snoozedUntil: userPlans.snoozedUntil,
 				title: plansTable.title,
 				slug: plansTable.slug,
 				durationDays: plansTable.durationDays,
@@ -104,6 +105,38 @@ export class SequentialPlan {
 			.where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.isActive, 1)))
 			.limit(1);
 		return r[0] ?? null;
+	}
+
+	/**
+	 * Defer the next delivery for this user's active plan enrollment until
+	 * `untilIso` (an ISO datetime string, e.g. `'2026-06-22 10:00:00'`).
+	 *
+	 * `usersForDelivery` skips users whose `snoozed_until` is in the future.
+	 * `markDelivered` clears the snooze, so a snooze never carries past the
+	 * first successful delivery — otherwise a one-day snooze becomes a
+	 * permanent pause.
+	 *
+	 * Idempotent. Returns true if the snooze was applied (active enrollment
+	 * found), false otherwise.
+	 */
+	async snooze(whatsapp: string, planId: number, untilIso: string): Promise<boolean> {
+		if (!untilIso) throw new Error('SequentialPlan.snooze: untilIso required');
+		const r = await this.db
+			.update(userPlans)
+			.set({ snoozedUntil: untilIso })
+			.where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.planId, planId), eq(userPlans.isActive, 1)))
+			.returning({ id: userPlans.id });
+		return r.length > 0;
+	}
+
+	/** Drop any active snooze. Returns true if a snooze was cleared. */
+	async clearSnooze(whatsapp: string, planId: number): Promise<boolean> {
+		const r = await this.db
+			.update(userPlans)
+			.set({ snoozedUntil: null })
+			.where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.planId, planId), eq(userPlans.isActive, 1)))
+			.returning({ id: userPlans.id });
+		return r.length > 0;
 	}
 
 	async markDone(whatsapp: string, planId: number, day: number): Promise<AdvanceResult> {
@@ -170,8 +203,10 @@ export class SequentialPlan {
 	/**
 	 * Cron audience: users due for the next day's delivery.
 	 *
-	 * Gates: active enrollment, opt-in lead, open Meta message window, and
-	 * `last_delivered_at` either NULL or older than `minIntervalHours` (default 20h).
+	 * Gates: active enrollment, opt-in lead, open Meta message window,
+	 * `last_delivered_at` either NULL or older than `minIntervalHours`
+	 * (default 20h), AND no active snooze (`snoozed_until` either NULL or
+	 * already in the past).
 	 */
 	async usersForDelivery({ limit = 500, minIntervalHours = 20 }: { limit?: number; minIntervalHours?: number } = {}): Promise<DeliveryUser[]> {
 		const intervalExpr = sql.raw(`(datetime('now', '-${minIntervalHours} hours'))`);
@@ -187,7 +222,13 @@ export class SequentialPlan {
 			.innerJoin(plansTable, eq(plansTable.id, userPlans.planId))
 			.innerJoin(messageWindows, and(eq(messageWindows.whatsapp, userPlans.whatsapp), sql`${messageWindows.endTime} > datetime('now')`))
 			.innerJoin(leads, and(eq(leads.whatsapp, userPlans.whatsapp), eq(leads.optIn, 1)))
-			.where(and(eq(userPlans.isActive, 1), or(isNull(userPlans.lastDeliveredAt), lt(userPlans.lastDeliveredAt, intervalExpr))))
+			.where(
+				and(
+					eq(userPlans.isActive, 1),
+					or(isNull(userPlans.lastDeliveredAt), lt(userPlans.lastDeliveredAt, intervalExpr)),
+					or(isNull(userPlans.snoozedUntil), lt(userPlans.snoozedUntil, sql`datetime('now')`)),
+				),
+			)
 			.limit(limit);
 	}
 
@@ -205,9 +246,11 @@ export class SequentialPlan {
 					.insert(userPlanProgress)
 					.values({ whatsapp, planId, day })
 					.onConflictDoNothing({ target: [userPlanProgress.whatsapp, userPlanProgress.planId, userPlanProgress.day] }),
+				// Clear snooze on successful delivery — otherwise a one-day snooze
+				// becomes a permanent pause once the timestamp has passed.
 				this.db
 					.update(userPlans)
-					.set({ lastDeliveredAt: sql`(datetime('now'))` })
+					.set({ lastDeliveredAt: sql`(datetime('now'))`, snoozedUntil: null })
 					.where(and(eq(userPlans.whatsapp, whatsapp), eq(userPlans.planId, planId))),
 			]);
 			if (this.emit) await this.emit({ type: 'plan_day_delivered', whatsapp, planId, day });

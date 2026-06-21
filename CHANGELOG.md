@@ -2,6 +2,22 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.9.2] — 2026-06-21
+
+### Added
+
+- **`SequentialPlan` snooze** + migration `021_user_plans_snooze.sql` — the last gap from the bibliafala adoption audit. `snooze(whatsapp, planId, untilIso)` sets `user_plans.snoozed_until`; `clearSnooze(...)` drops it; `usersForDelivery` now skips users whose snooze is in the future. `markDelivered` clears `snoozed_until` on successful delivery, so a one-day snooze can never silently become a permanent pause. `getActiveEnrollment` exposes `snoozedUntil` for handler-side checks. Single timestamp (not a counter) lets callers express "until tomorrow morning" / "until next Monday" / "until $exact_time" without bespoke math.
+
+### Tests
+
+- 908 → **915** tests passing across 71 files. 7 new tests in `sequential_plan.test.ts` covering snooze on inactive enrollment, gate filtering (future vs expired), markDelivered-clears-snooze, clearSnooze explicit drop, untilIso validation.
+
+### Migration notes
+
+No breaking changes. Apply migration `021_user_plans_snooze.sql` before deploying. Existing `user_plans` rows get `snoozed_until = NULL` → behave exactly as before (included in every audience query, no snooze active).
+
+With this patch the framework is feature-complete for the bibliafala migration audit. Reading-plan feedback (`reading_plan_feedback` table from bibliafala migration 027) was deliberately NOT extracted — it's small and apps that need it ship their own table.
+
 ## [0.9.1] — 2026-06-21
 
 ### Added

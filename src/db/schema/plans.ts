@@ -45,6 +45,7 @@ export const userPlans = sqliteTable(
 		completedAt: text('completed_at'),
 		isActive: integer('is_active').notNull().default(1),
 		lastDeliveredAt: text('last_delivered_at'),
+		snoozedUntil: text('snoozed_until'),
 	},
 	(t) => [
 		unique().on(t.whatsapp, t.planId),
@@ -52,6 +53,7 @@ export const userPlans = sqliteTable(
 		index('idx_user_plans_active').on(t.isActive, t.whatsapp),
 		index('idx_user_plans_plan_active').on(t.planId, t.isActive, t.completedAt),
 		index('idx_user_plans_last_delivered').on(t.lastDeliveredAt),
+		index('idx_user_plans_snoozed_until').on(t.snoozedUntil),
 	]
 );
 
