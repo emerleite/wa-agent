@@ -789,7 +789,20 @@ Per-primitive deep-dives — decision trees, setup, schema flexibility, anti-pat
 - [`docs/ESCALATION.md`](./docs/ESCALATION.md) — `EscalationStore` + notifiers (Slack / HTTP / custom), app-owned schemas.
 - [`docs/CONSENT.md`](./docs/CONSENT.md) — `ConsentStore` + `consentGate` pipeline integration, re-grant flows.
 - [`docs/REVIEW_QUEUE.md`](./docs/REVIEW_QUEUE.md) — `AgentReviewQueue` (v0.8) — gates assisted-mode sends on human approval.
-- [`docs/AI_ROUTER.md`](./docs/AI_ROUTER.md) — `AIRouter` + `CircuitBreaker` + `AICallLedger` (v0.9) — multi-provider failover with per-call observability.
+- [`docs/AI_ROUTER.md`](./docs/AI_ROUTER.md) — `AIRouter` + `CircuitBreaker` + `AICallLedger` (v0.9) — multi-provider single-shot dispatch with per-call observability.
+- [`docs/META_SETUP.md`](./docs/META_SETUP.md) — operational guide for the Meta side: tokens, webhooks, templates, opt-in, policy. References the helper scripts.
+- [`docs/TESTING.md`](./docs/TESTING.md) — three-layer testing pattern (unit/integration/mutation), `withIsolatedD1`, HMAC helper, mock-meta-server workflow, CI matrix.
+
+## Tooling
+
+Ships alongside the runtime under [`scripts/`](./scripts) and [`tools/`](./tools):
+
+- [`tools/mock-meta-server.ts`](./tools/mock-meta-server.ts) — local Hono server impersonating `graph.facebook.com`. Develop and test without burning Meta tokens. Run via `npm run mock:meta` (requires `@hono/node-server` + `tsx`).
+- [`scripts/check-hardcoded.sh`](./scripts/check-hardcoded.sh) — CI linter that fails on inlined external service URLs. Customize via `HARDCODED_PATTERNS` / `HARDCODED_EXTRA_PATTERNS`. Per-line escape: `// hardcoded:allow`.
+- [`scripts/meta-templates.sh`](./scripts/meta-templates.sh) — `check` / `list` / `create <file.json>` / `delete <name>` for WhatsApp templates.
+- [`scripts/meta-webhook.sh`](./scripts/meta-webhook.sh) — `status` / `subscribe` / `unsubscribe` (WABA-app) and `url-status` / `set-url` / `set-url-local` (app webhook URL). Encodes the distinction Meta makes easy to confuse.
+- [`scripts/push-secrets.sh`](./scripts/push-secrets.sh) — bulk `wrangler secret put` from `.dev.vars`. `DRY=1` for dry-run.
+- [`scripts/unmock-meta.sh`](./scripts/unmock-meta.sh) — teardown for the mock server + `.dev.vars` cleanup.
 
 ## Feature audit — bibliafala → wa-agent
 
@@ -986,6 +999,16 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 ## Status
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
+
+### v0.10.0 — minor release (DX + Ops, no runtime changes):
+
+- **Mock Meta server** (`tools/mock-meta-server.ts` + `npm run mock:meta`) — develop and test against a local fake `graph.facebook.com`. No token burn, no real WhatsApp traffic. Pair with `bash scripts/unmock-meta.sh` for teardown.
+- **Hardcoded-value linter** (`scripts/check-hardcoded.sh` + `npm run check:hardcoded`) — CI guard against inlined external service URLs. JSDoc / `//` comments skipped; per-line escape via `// hardcoded:allow`.
+- **Meta ops scripts** (`scripts/meta-templates.sh`, `meta-webhook.sh`, `push-secrets.sh`) — wrap the Graph API for templates, webhook URL, WABA-app subscription, bulk secret push from `.dev.vars`.
+- **`docs/META_SETUP.md`** — full operational guide for the Meta side (tokens, identifiers, webhook mental model, templates, opt-in, Jan/2026 AI policy, token rotation).
+- **`docs/TESTING.md`** — three-layer testing pattern with `withIsolatedD1` recipe, HMAC helper, mock-meta workflow, recommended CI matrix.
+
+No new D1 migrations. Everything is additive and opt-in.
 
 ### v0.9.2 — patch release (closes the last bibliafala-adoption gap):
 

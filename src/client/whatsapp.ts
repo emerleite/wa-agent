@@ -32,7 +32,7 @@ export class WhatsAppClient {
 	readonly graphBase: string;
 	readonly authString: string;
 
-	constructor({ endpoint, token, graphBase = 'https://graph.facebook.com/v22.0' }: WhatsAppClientOptions) {
+	constructor({ endpoint, token, graphBase = 'https://graph.facebook.com/v22.0' }: WhatsAppClientOptions) { // hardcoded:allow — framework-level Meta API default
 		if (!endpoint) throw new Error('WhatsAppClient: endpoint required');
 		if (!token) throw new Error('WhatsAppClient: token required');
 		this.endpoint = `${endpoint.replace(/\/$/, '')}/messages`;

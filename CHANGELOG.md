@@ -2,6 +2,33 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.10.0] — 2026-06-25
+
+### Added
+
+- **`tools/mock-meta-server.ts`** — local Hono server (port 4000 by default) that impersonates `graph.facebook.com`. Lets you exercise inbound→outbound flows without burning a Meta token or sending real WhatsApp messages. Logs every request and retains it in memory for introspection via `GET /__received` / `POST /__reset`. Mocks `messages`, `media` metadata + binary, `message_templates` (create/list/delete), `subscriptions` (app webhook), `subscribed_apps` (WABA), and `debug_token`. Runnable with `npm run mock:meta` (added to scripts) or `npx tsx node_modules/wa-agent/tools/mock-meta-server.ts` for consumers.
+- **`scripts/check-hardcoded.sh`** — CI-grade linter that fails the build if external service URLs (Graph API, OpenAI, Anthropic, Google Generative, Langfuse, Groq, `*.workers.dev`) appear inlined in source instead of coming from env. Skips JSDoc lines, `//` comments, and lines marked with `// hardcoded:allow` (per-line escape hatch for legitimate framework defaults). Customize via `HARDCODED_PATTERNS` (replace) or `HARDCODED_EXTRA_PATTERNS` (append). Added as `npm run check:hardcoded`.
+- **`scripts/meta-templates.sh`** — wrapper over the Graph API for template lifecycle. Subcommands: `check` (token scopes + WABA access), `list`, `create <file.json>` (any approved template shape), `delete <name>`. Reads `.dev.vars` by default; override with `ENV_FILE=...`.
+- **`scripts/meta-webhook.sh`** — wrapper over the Graph API for webhook + WABA-app subscription. Subcommands: `status` / `subscribe` / `unsubscribe` (WABA-app), `url-status` / `set-url <url>` / `set-url-local <base>` (app webhook URL). Encodes the distinction between `set-url` (per-env webhook target) and `subscribe` (one-time WABA→app binding), which Meta makes easy to confuse.
+- **`scripts/push-secrets.sh`** — bulk `wrangler secret put` from `.dev.vars` against any env. Default key list covers the common Meta + AI provider envelope; override via `SECRETS_FILE=` for app-specific lists. `DRY=1` for dry-run.
+- **`scripts/unmock-meta.sh`** — tears down the local mock server and removes the `META_GRAPH_BASE_URL=http://localhost:4000` line from `.dev.vars` so `wrangler dev` resumes pointing at real Meta.
+- **`docs/META_SETUP.md`** — operational guide for the WhatsApp Business Cloud API: System User token + scopes, the 4 identifiers, the `set-url` vs `subscribe` mental model, template approval workflow, UTILITY→MARKETING reclassification risk, the `wa.me`-in-buttons prohibition, opt-in patterns, Meta AI policy (Jan/2026), token rotation, sandbox vs production limits. References the helper scripts throughout.
+- **`docs/TESTING.md`** — testing conventions: three-layer pattern (unit / integration / mutation), `withIsolatedD1` recipe for per-test D1 reset, HMAC test helper, mock-meta-server workflow, `SELF.fetch` pattern, recommended CI matrix (4 parallel jobs), curl smoke tests.
+
+### Changed
+
+- `WhatsAppClient` constructor — its default `graphBase = 'https://graph.facebook.com/v22.0'` is now marked with `// hardcoded:allow` so consumers running `check-hardcoded` against `node_modules/wa-agent/` don't trip on a framework-level default.
+- `package.json` — `files` now includes `scripts/` and `tools/` so consumers can copy them. `@hono/node-server` added as optional peerDep (needed only if you run `npm run mock:meta`). `tsx` added as devDep for running `tools/mock-meta-server.ts` directly.
+
+### Migration notes
+
+No breaking changes, no new D1 migrations. Everything in v0.10 is opt-in:
+- Don't use the mock server? Don't install `@hono/node-server` / `tsx`.
+- Don't want the linter in CI? Don't wire `npm run check:hardcoded`.
+- Don't need the Meta scripts? They live in `node_modules/wa-agent/scripts/` — copy to your repo only when useful.
+
+This release closes the "DX/Ops" gap identified comparing wa-agent against a downstream POC (`zap-prime`). v0.11 will tackle the bigger gap — adding an **agent loop** with tool calling on top of the existing single-shot `AIRouter`.
+
 ## [0.9.2] — 2026-06-21
 
 ### Added

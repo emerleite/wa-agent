@@ -1,6 +1,6 @@
 {
 	"name": "wa-agent",
-	"version": "0.9.2",
+	"version": "0.10.0",
 	"description": "Opinionated WhatsApp Cloud API agent framework for Cloudflare Workers — Drizzle-backed stores, D1-coalesced webhook queue, AI assistant integration with pluggable reply enrichment, opt-in CRM, account-link redemption, broadcast cron, sequential drip plans, rate-capped opportunistic side-channel sends, Zod-validated event stream + Analytics Engine sink, and a composable intent → policy → LLM → audit pipeline.",
 	"type": "module",
 	"main": "dist/index.js",
@@ -20,6 +20,8 @@
 		"dist",
 		"src",
 		"migrations",
+		"scripts",
+		"tools",
 		"README.md"
 	],
 	"scripts": {
@@ -30,7 +32,9 @@
 		"test:coverage": "vitest run --coverage",
 		"test:unit": "vitest run -c vitest.config.unit.ts",
 		"test:mutate": "stryker run",
-		"db:generate": "drizzle-kit generate"
+		"db:generate": "drizzle-kit generate",
+		"check:hardcoded": "bash scripts/check-hardcoded.sh",
+		"mock:meta": "tsx tools/mock-meta-server.ts"
 	},
 	"keywords": [
 		"whatsapp",
@@ -47,7 +51,8 @@
 	},
 	"peerDependencies": {
 		"hono": "^4.0.0",
-		"openai": "^4.0.0"
+		"openai": "^4.0.0",
+		"@hono/node-server": "^1.0.0 || ^2.0.0"
 	},
 	"peerDependenciesMeta": {
 		"hono": {
@@ -55,17 +60,22 @@
 		},
 		"openai": {
 			"optional": true
+		},
+		"@hono/node-server": {
+			"optional": true
 		}
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.5.16",
 		"@cloudflare/workers-types": "^4.20240909.0",
+		"@hono/node-server": "^2.0.6",
 		"@stryker-mutator/core": "^9.6.1",
 		"@stryker-mutator/vitest-runner": "^9.6.1",
 		"@vitest/coverage-istanbul": "^2.0.5",
 		"drizzle-kit": "^0.30.6",
 		"hono": "^4.4.4",
 		"openai": "~4.57.0",
+		"tsx": "^4.22.4",
 		"typescript": "^5.6.0",
 		"vitest": "^2.0.5"
 	},
