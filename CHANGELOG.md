@@ -2,6 +2,39 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.11.0] — 2026-07-17
+
+### Added
+
+- **`AgentLoop`** (`src/agent_loop/`) — multi-step tool-calling loop on top of a pluggable `AgentLLM` adapter. Given a system prompt, user text, and an opaque context, it loads recent history from `ConversationMemory`, calls the LLM, dispatches any tool calls via `ToolRegistry`, appends the results, and re-invokes the model until it returns a plain text answer, a `stopWhen(steps)` predicate says stop, `maxSteps` is reached, or the adapter throws. Distinct from `AIRouter` (v0.9): `AIRouter.route()` is one stateless call with multi-provider failover — right for classifiers and summarizers. `AgentLoop.run()` is a full conversational turn with tools and memory — right when the model must reason across multiple actions.
+- **`ToolRegistry`** — Zod-schema-validated registry + dispatcher for `AgentTool` instances. Enforces name uniqueness at construction, returns validation errors as tool-result strings (so the LLM re-asks the user) rather than throwing, and threads app context (`env`, `db`, identity) into every tool's `execute(input, ctx)`. Non-string return values are JSON-serialized automatically.
+- **`ConversationMemory`** + migration `022_agent_turns.sql` — persistent multi-turn memory in a new `agent_turns` table. Distinct from `MessageLog` (audit / dashboards): `agent_turns` captures the exact structure the LLM needs to reconstruct machine state, including tool calls and tool results. `loadWindow(whatsapp, {limit})` returns the last N messages in chronological order; `loadTurn(turnId)` returns every row of a single run. Same `tableName` + `columnMap` + `omitColumns` + `allowedExtraColumns` flex as `EscalationStore` / `ConsentStore` / `AICallLedger`. Multi-tenant scoping via `tenantId` constructor arg (or per-call override on `loadWindow`).
+- **`wa-agent/ai-sdk` subpath adapter** (`src/ai_sdk/index.ts`) — `createAISDKAgentLLM(model)` wraps a Vercel AI SDK `LanguageModel` into the `AgentLLM` interface. Runs the SDK with `stopWhen: stepCountIs(1)` so the framework's loop owns tool dispatch — validation, audit trail, context injection stay under the framework's control. `ai` + `@ai-sdk/*` are optional peerDeps: apps that don't use tool calling pay zero. Any provider works — `@ai-sdk/openai`, `@ai-sdk/google`, `@ai-sdk/anthropic`, etc. — by swapping one import.
+- **`AICallLedger.turnId`** + migration `023_ai_call_log_turn_id.sql` — adds a nullable `turn_id` column to `ai_call_log` so every LLM call inside an `AgentLoop.run(...)` is correlated. Enables per-turn dashboards ("cost per completed turn", "average steps per turn") without joining across tables. Existing single-shot `AIRouter` callers unaffected — `turnId` is `NULL`.
+- **`docs/AGENT_LOOP.md`** — decision tree (AIRouter vs AgentLoop), architecture diagram, setup, tool authoring conventions (Zod schemas, error-as-string, context injection), system-prompt composition, memory windowing, tenant scoping, observability queries, adapter authoring, anti-patterns, migration from AIRouter-only setups.
+- **`examples/tool-agent/`** — minimal end-to-end example: a WhatsApp bot that books / lists / cancels appointments via three Zod-validated tools using Gemini via the AI SDK adapter. Shows the full wire-up in ~130 lines.
+
+### Changed
+
+- `AICallLedger.record({ turnId })` — new optional argument. Not passing it preserves the v0.9 behavior exactly.
+- `AICallLedger.list({ turnId })` — new optional filter for per-turn drill-down.
+- `AICallLedger.byId(...)` / `list(...)` result rows now include the `turnId` field.
+- `package.json` — new subpath export `./ai-sdk`; `ai` added as optional peerDep with a wide range (`^6.0.0 || ^7.0.0`); `ai` added as devDep for framework typecheck.
+
+### Tests
+
+- 915 → **955 tests passing** across 74 files (40 new). Highlights:
+  - `test/unit/tool_registry.test.ts` — 11 tests covering construction validation, `describe()` output, execute happy path, unknown tool, invalid arguments, tool throws, context injection.
+  - `test/unit/agent_loop.test.ts` — 13 tests covering happy path (no tools), tool loop (single + parallel tool calls), system prompt injection, tool descriptor advertisement, `stopWhen` early exit, `max_steps` termination, LLM error mid-loop with partial steps preserved, arg validation.
+  - `test/integration/conversation_memory.test.ts` — 13 tests covering CRUD round-trip, empty-tool-calls handling, windowing, single-tenant / multi-tenant isolation, `loadTurn`.
+  - `test/integration/ai_call_log.test.ts` — 3 new tests for `turnId` persistence, NULL for standalone router calls, `list({turnId})` filtering.
+
+### Migration notes
+
+Additive release, no breaking changes. Apply migrations `022_agent_turns.sql` and `023_ai_call_log_turn_id.sql` before deploying with `AgentLoop`. Apps that don't use the loop can ignore both — nothing else in the framework depends on them.
+
+The AI SDK peerDep is optional. If you don't use `wa-agent/ai-sdk`, don't install `ai` — bundle size is unchanged. If you want tool calling, `npm install ai @ai-sdk/<provider>` in your Worker.
+
 ## [0.10.0] — 2026-06-25
 
 ### Added

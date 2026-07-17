@@ -1,0 +1,15 @@
+name = "tool-agent"
+main = "src/index.js"
+compatibility_date = "2026-04-22"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tool-agent"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
+# Apply migrations from wa-agent + this example's own:
+#   wrangler d1 migrations apply tool-agent \
+#     --migrations-dir ../../migrations
+#   wrangler d1 migrations apply tool-agent \
+#     --migrations-dir ./migrations

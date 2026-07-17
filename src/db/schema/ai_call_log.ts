@@ -1,7 +1,7 @@
 /**
- * Per-call observability ledger for AIRouter (v0.9).
+ * Per-call observability ledger for AIRouter (v0.9) + AgentLoop (v0.11).
  *
- * Schema mirrors migrations/019_ai_call_log.sql.
+ * Schema mirrors migrations/019_ai_call_log.sql + 023_ai_call_log_turn_id.sql.
  */
 import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
@@ -23,6 +23,7 @@ export const aiCallLog = sqliteTable(
 		errorMessage: text('error_message'),
 		tenantId: text('tenant_id'),
 		whatsapp: text('whatsapp'),
+		turnId: text('turn_id'),
 		createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 	},
 	(t) => [
@@ -30,6 +31,7 @@ export const aiCallLog = sqliteTable(
 		index('idx_ai_call_log_task_day').on(t.task, t.createdAt),
 		index('idx_ai_call_log_status_day').on(t.status, t.createdAt),
 		index('idx_ai_call_log_tenant_day').on(t.tenantId, t.createdAt),
+		index('idx_ai_call_log_turn').on(t.turnId),
 	],
 );
 

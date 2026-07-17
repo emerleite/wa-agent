@@ -46,6 +46,7 @@ export type CallField =
 	| 'errorMessage'
 	| 'tenantId'
 	| 'whatsapp'
+	| 'turnId'
 	| 'createdAt';
 
 export const DEFAULT_CALL_LOG_COLUMNS: Readonly<Record<CallField, string>> = Object.freeze({
@@ -63,6 +64,7 @@ export const DEFAULT_CALL_LOG_COLUMNS: Readonly<Record<CallField, string>> = Obj
 	errorMessage: 'error_message',
 	tenantId: 'tenant_id',
 	whatsapp: 'whatsapp',
+	turnId: 'turn_id',
 	createdAt: 'created_at',
 });
 
@@ -92,6 +94,11 @@ export interface RecordCallArgs {
 	errorMessage?: string | null;
 	tenantId?: string | null;
 	whatsapp?: string | null;
+	/**
+	 * Correlate this row to an `AgentLoop.run(...)` invocation (v0.11).
+	 * NULL for standalone `AIRouter` calls with no surrounding loop.
+	 */
+	turnId?: string | null;
 	extraColumns?: Record<string, string | number | null>;
 }
 
@@ -101,6 +108,7 @@ export interface ListCallsOptions {
 	status?: CallStatus;
 	tenantId?: string;
 	whatsapp?: string;
+	turnId?: string;
 	/** ISO date range (e.g. `'2026-06-19'`). Inclusive. */
 	since?: string;
 	limit?: number;
@@ -168,6 +176,7 @@ export class AICallLedger {
 			['errorMessage', args.errorMessage ?? null],
 			['tenantId', args.tenantId ?? null],
 			['whatsapp', args.whatsapp ?? null],
+			['turnId', args.turnId ?? null],
 		];
 		const cols: Array<ReturnType<typeof sql>> = [];
 		const vals: Array<unknown> = [];
@@ -198,7 +207,7 @@ export class AICallLedger {
 		return rows[0] ?? null;
 	}
 
-	async list({ task, provider, status, tenantId, whatsapp, since, limit = 100 }: ListCallsOptions = {}): Promise<CallRow[]> {
+	async list({ task, provider, status, tenantId, whatsapp, turnId, since, limit = 100 }: ListCallsOptions = {}): Promise<CallRow[]> {
 		const c = this.columns;
 		const filters = [
 			task ? sql`${sql.raw(c.task)} = ${task}` : null,
@@ -206,6 +215,7 @@ export class AICallLedger {
 			status ? sql`${sql.raw(c.status)} = ${status}` : null,
 			tenantId ? sql`${sql.raw(c.tenantId)} = ${tenantId}` : null,
 			whatsapp ? sql`${sql.raw(c.whatsapp)} = ${whatsapp}` : null,
+			turnId ? sql`${sql.raw(c.turnId)} = ${turnId}` : null,
 			since ? sql`${sql.raw(c.createdAt)} >= ${since}` : null,
 		].filter((f): f is ReturnType<typeof sql> => f !== null);
 		const where = filters.length ? sql` WHERE ${sql.join(filters, sql` AND `)}` : sql``;
@@ -264,6 +274,7 @@ export class AICallLedger {
 			['errorMessage', '"errorMessage"'],
 			['tenantId', '"tenantId"'],
 			['whatsapp', 'whatsapp'],
+			['turnId', '"turnId"'],
 			['createdAt', '"createdAt"'],
 		];
 		const fragments = fields.map(([field, alias]) => {

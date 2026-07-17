@@ -779,6 +779,7 @@ export default {
 - [`examples/support-bot/`](./examples/support-bot) — focused: AI pipeline + ReplyEnricher CTA + tier gate, no cron. About 100 lines. The right starting point if you want an AI support agent, not a content calendar.
 - [`examples/full-bot/`](./examples/full-bot) — every primitive in one bot: AI with reply-enricher CTA footer, summarization, transcription, devotional broadcast, daily yes/no, 21-day plan, TTS narration cached in R2, payment-link-backed upsell, `link <code>` account redemption, opportunistic free-tier tip via `afterReply`, `ConsentStore` gate before AI fallback.
 - [`examples/multi-tenant-bot/`](./examples/multi-tenant-bot) — BSP-style: one Worker serves many WhatsApp numbers via `MultiTenantAgentRegistry` (v0.6+) + `drainAll` cron (v0.7+). About 130 lines. Pair with `docs/MULTI_TENANT.md`.
+- [`examples/tool-agent/`](./examples/tool-agent) — `AgentLoop` (v0.11) end-to-end: multi-step tool calling with Zod-validated inputs, persistent memory, per-turn cost dashboards. About 130 lines. Pair with `docs/AGENT_LOOP.md`.
 
 ## Recipe docs
 
@@ -790,6 +791,7 @@ Per-primitive deep-dives — decision trees, setup, schema flexibility, anti-pat
 - [`docs/CONSENT.md`](./docs/CONSENT.md) — `ConsentStore` + `consentGate` pipeline integration, re-grant flows.
 - [`docs/REVIEW_QUEUE.md`](./docs/REVIEW_QUEUE.md) — `AgentReviewQueue` (v0.8) — gates assisted-mode sends on human approval.
 - [`docs/AI_ROUTER.md`](./docs/AI_ROUTER.md) — `AIRouter` + `CircuitBreaker` + `AICallLedger` (v0.9) — multi-provider single-shot dispatch with per-call observability.
+- [`docs/AGENT_LOOP.md`](./docs/AGENT_LOOP.md) — `AgentLoop` + `ToolRegistry` + `ConversationMemory` (v0.11) — multi-step tool-calling on top of a pluggable `AgentLLM` adapter. Ships with a Vercel AI SDK adapter at `wa-agent/ai-sdk`.
 - [`docs/META_SETUP.md`](./docs/META_SETUP.md) — operational guide for the Meta side: tokens, webhooks, templates, opt-in, policy. References the helper scripts.
 - [`docs/TESTING.md`](./docs/TESTING.md) — three-layer testing pattern (unit/integration/mutation), `withIsolatedD1`, HMAC helper, mock-meta-server workflow, CI matrix.
 
@@ -999,6 +1001,16 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 ## Status
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
+
+### v0.11.0 — minor release (AgentLoop — multi-step tool calling):
+
+- **`AgentLoop` + `ToolRegistry` + `ConversationMemory`** — a full tool-calling agent loop. Given a system prompt, user text, and Zod-validated tools, it runs a multi-step reasoning turn: LLM call → tool dispatch → tool result → LLM again → until final text, `stopWhen`, or `maxSteps`. Distinct from `AIRouter` (single-shot with failover) — the two coexist for different workloads.
+- **`wa-agent/ai-sdk` subpath adapter** — `createAISDKAgentLLM(model)` wraps any Vercel AI SDK `LanguageModel` into the `AgentLLM` interface. `ai` + `@ai-sdk/*` are optional peerDeps.
+- **`AICallLedger.turnId`** + migration `023_ai_call_log_turn_id.sql` — every LLM call inside a loop run is tagged with the same `turnId` for per-turn cost / step-count dashboards.
+- **Migration `022_agent_turns.sql`** — new `agent_turns` table for machine-state memory (distinct from `MessageLog` which stays for audit / dashboards).
+- **`docs/AGENT_LOOP.md`** + **`examples/tool-agent/`** — decision tree, tool authoring conventions, and a working end-to-end example (appointment bookings via Gemini).
+
+955 tests passing, additive migrations, no breaking changes.
 
 ### v0.10.0 — minor release (DX + Ops, no runtime changes):
 

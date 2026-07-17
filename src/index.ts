@@ -241,6 +241,36 @@ export type {
 	ChainAttempt,
 } from './ai/router.js';
 
+// Agent loop (v0.11) — multi-step tool-calling on top of AgentLLM adapters.
+// Ships with a Vercel AI SDK adapter at `wa-agent/ai-sdk` (subpath export).
+// See docs/AGENT_LOOP.md for setup, tool authoring, and observability.
+export { AgentLoop } from './agent_loop/loop.js';
+export type {
+	AgentLoopOptions,
+	RunArgs as AgentLoopRunArgs,
+} from './agent_loop/loop.js';
+export { ToolRegistry } from './agent_loop/tool_registry.js';
+export type { ToolExecuteResult } from './agent_loop/tool_registry.js';
+export { ConversationMemory, DEFAULT_MEMORY_COLUMNS } from './agent_loop/conversation_memory.js';
+export type {
+	ConversationMemoryOptions,
+	MemoryField,
+	AppendRowInput,
+	LoadWindowOptions,
+} from './agent_loop/conversation_memory.js';
+export type {
+	AgentMessage,
+	ToolCall,
+	AgentTool,
+	AgentStep,
+	AgentRunResult,
+	AgentLLM,
+	AgentLLMArgs,
+	AgentLLMResult,
+	AgentToolDescriptor,
+} from './agent_loop/types.js';
+export type { AgentTurnRow } from './db/schema/agent_turns.js';
+
 // Human-review queue (v0.8 — closes the assisted-mode loop)
 export { AgentReviewQueue, DEFAULT_REVIEW_COLUMNS } from './review/review_queue.js';
 export type {

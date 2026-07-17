@@ -145,3 +145,39 @@ describe('AICallLedger — extraColumns', () => {
 		).rejects.toThrow(/not_allowed/);
 	});
 });
+
+describe('AICallLedger — turnId (v0.11 AgentLoop correlation)', () => {
+	it('persists turn_id when provided', async () => {
+		const led = new AICallLedger({ db: d1 });
+		const turnId = crypto.randomUUID();
+		const id = await led.record({
+			task: 'agent_loop',
+			provider: 'ai-sdk',
+			status: 'success',
+			turnId,
+		});
+		const row = await led.byId(id);
+		expect(row?.turnId).toBe(turnId);
+	});
+
+	it('leaves turn_id NULL for standalone AIRouter calls', async () => {
+		const led = new AICallLedger({ db: d1 });
+		const id = await led.record({ task: 'classifier', provider: 'p', status: 'success' });
+		const row = await led.byId(id);
+		expect(row?.turnId).toBeNull();
+	});
+
+	it('list() filters by turnId, isolates from other turns', async () => {
+		const led = new AICallLedger({ db: d1 });
+		const turnA = crypto.randomUUID();
+		const turnB = crypto.randomUUID();
+		await led.record({ task: 'agent_loop', provider: 'p', status: 'success', turnId: turnA });
+		await led.record({ task: 'agent_loop', provider: 'p', status: 'success', turnId: turnA });
+		await led.record({ task: 'agent_loop', provider: 'p', status: 'success', turnId: turnB });
+		const rowsA = await led.list({ turnId: turnA });
+		const rowsB = await led.list({ turnId: turnB });
+		expect(rowsA).toHaveLength(2);
+		expect(rowsB).toHaveLength(1);
+		expect(rowsA.every((r) => r.turnId === turnA)).toBe(true);
+	});
+});
