@@ -1,0 +1,6 @@
+dist
+coverage
+node_modules
+.wrangler
+reports
+migrations

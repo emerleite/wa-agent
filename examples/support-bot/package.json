@@ -1,0 +1,26 @@
+{
+	"name": "wa-agent-example-support-bot",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "AI support example — pipeline (intent → policy → LLM → audit) + tier gate + rate limit.",
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"db:create": "wrangler d1 create support-bot",
+		"db:migrate": "wrangler d1 migrations apply support-bot --local --migrations-dir ../../migrations",
+		"db:migrate:remote": "wrangler d1 migrations apply support-bot --remote --migrations-dir ../../migrations",
+		"kv:create": "wrangler kv namespace create support-bot-rl",
+		"mock:meta": "tsx ../../tools/mock-meta-server.ts"
+	},
+	"dependencies": {
+		"hono": "^4.4.4",
+		"openai": "~4.57.0",
+		"wa-agent": "file:../.."
+	},
+	"devDependencies": {
+		"@hono/node-server": "^2.0.6",
+		"tsx": "^4.22.4",
+		"wrangler": "^4.0.0"
+	}
+}

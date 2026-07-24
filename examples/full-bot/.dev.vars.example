@@ -1,0 +1,23 @@
+# Copy to `.dev.vars` and fill in — full-bot uses every primitive so the list
+# is long. Trim to what you actually need before running.
+
+# --- Meta / WhatsApp Cloud API ---
+META_WA_ENDPOINT=https://graph.facebook.com/v22.0/REPLACE_PHONE_NUMBER_ID
+META_WA_TOKEN=REPLACE_ME
+META_WH_TOKEN=REPLACE_ME
+META_APP_SECRET=REPLACE_ME
+
+# --- Azure OpenAI (assistant + summarizer + transcription) ---
+AZURE_OPENAI_ENDPOINT=https://REPLACE_RESOURCE.openai.azure.com
+AZURE_OPENAI_API_KEY=REPLACE_ME
+AZURE_API_VERSION=2024-08-01-preview
+AZURE_MODEL_DEPLOYMENT=gpt-4o-mini
+ASSISTANT_ID=asst_REPLACE
+AZURE_WHISPER_DEPLOYMENT=whisper
+
+# --- Azure Speech (TTS) ---
+AZURE_SPEECH_KEY=REPLACE_ME
+AZURE_SPEECH_REGION=eastus
+
+# --- Optional: local mock Meta ---
+# META_GRAPH_BASE_URL=http://localhost:4000

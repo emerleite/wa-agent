@@ -2,6 +2,21 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.11.1] — 2026-07-24
+
+### Added
+
+- **`.editorconfig` + `.prettierrc` + `.prettierignore`** at repo root — tabs, LF, single quotes, 140-char width, trailing commas. Makes contributor formatting deterministic; matches the convention already used across the source.
+- **`bash.md`** — a dev cookbook of shell recipes: D1 execute/migrate, mock Meta server, inbound webhook simulation with a valid HMAC signature, Meta ops helpers, hardcoded-value linter usage, tail-log grep, framework dev-loop, release checklist. Aimed at first-day-on-project onboarding.
+- **`tools/README.md`** — documents `mock-meta-server.ts` (simulated endpoints, introspection endpoints, what it does NOT do). Was only discoverable via the file's JSDoc; now surfaced.
+- **`examples/*/package.json`** — every example (`echo-bot`, `tool-agent`, `support-bot`, `multi-tenant-bot`, `full-bot`) now ships a runnable `package.json` with `dev`, `deploy`, `db:create`, `db:migrate`, `db:migrate:remote`, `mock:meta` (and `kv:create` / `r2:create` where applicable) scripts. `wa-agent` is wired as `file:../..` so `npm install` inside an example uses the working copy.
+- **`examples/*/.dev.vars.example`** — every example ships an env template with inline comments explaining where each value comes from (Meta App → Settings → Basic, Azure OpenAI resource, Gemini AI Studio, etc.). Copy → fill → run.
+- **`examples/echo-bot/README.md`** — rewritten with a "Quickstart (local, no real Meta account)" section that walks from `npm install` to a running bot in 5 commands, plus a `curl` recipe that computes a valid `X-Hub-Signature-256` over the payload (framework has no dev-time signature bypass — the recipe is the correct way to exercise the webhook without Meta).
+
+### Notes
+
+Additive release, no framework API changes. Existing consumers pick up the new configs by re-installing; nothing forces adoption. Migrations, exports, peer deps unchanged from v0.11.0.
+
 ## [0.11.0] — 2026-07-17
 
 ### Added

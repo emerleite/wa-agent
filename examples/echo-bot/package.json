@@ -1,0 +1,24 @@
+{
+	"name": "wa-agent-example-echo-bot",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Minimal wa-agent example — replies with the user's own text.",
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"db:create": "wrangler d1 create echo-bot",
+		"db:migrate": "wrangler d1 migrations apply echo-bot --local --migrations-dir ../../migrations",
+		"db:migrate:remote": "wrangler d1 migrations apply echo-bot --remote --migrations-dir ../../migrations",
+		"mock:meta": "tsx ../../tools/mock-meta-server.ts"
+	},
+	"dependencies": {
+		"hono": "^4.4.4",
+		"wa-agent": "file:../.."
+	},
+	"devDependencies": {
+		"@hono/node-server": "^2.0.6",
+		"tsx": "^4.22.4",
+		"wrangler": "^4.0.0"
+	}
+}

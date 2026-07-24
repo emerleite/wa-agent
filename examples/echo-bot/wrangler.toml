@@ -8,6 +8,9 @@ binding = "DB"
 database_name = "echo-bot"
 database_id = "REPLACE_WITH_YOUR_D1_ID"
 
-# Run all migrations from the wa-agent package:
-#   wrangler d1 migrations apply echo-bot \
-#     --migrations-dir ../../migrations
+# Apply the wa-agent framework migrations:
+#   npm run db:migrate            # local (miniflare)
+#   npm run db:migrate:remote     # production D1
+#
+# Or manually:
+#   wrangler d1 migrations apply echo-bot --local --migrations-dir ../../migrations

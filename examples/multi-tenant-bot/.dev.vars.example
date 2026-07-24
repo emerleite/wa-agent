@@ -1,0 +1,18 @@
+# Copy to `.dev.vars` and fill in — `wrangler dev` reads it automatically.
+# `.dev.vars` is gitignored; never commit real secrets.
+#
+# Multi-tenant: PER-TENANT tokens (WA_TOKEN, model deployment, etc) live in
+# the `tenants` D1 table, not here. Only APP-GLOBAL secrets belong in .dev.vars.
+
+# --- Meta app-global ---
+# System User token used to fetch per-tenant WhatsApp Business info during onboarding
+META_SYSTEM_USER_TOKEN=REPLACE_ME
+# Webhook verify token (any random string; must match what you set in Meta)
+META_WH_TOKEN=REPLACE_ME
+# App Secret for X-Hub-Signature-256 verification (same for every tenant on this app)
+META_APP_SECRET=REPLACE_ME
+
+# --- Azure OpenAI (shared endpoint; per-tenant model deployments come from D1) ---
+AZURE_OPENAI_ENDPOINT=https://REPLACE_RESOURCE.openai.azure.com
+AZURE_OPENAI_API_KEY=REPLACE_ME
+AZURE_API_VERSION=2024-08-01-preview

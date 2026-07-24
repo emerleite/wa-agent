@@ -1,0 +1,20 @@
+# Copy to `.dev.vars` and fill in — `wrangler dev` reads it automatically.
+# `.dev.vars` is gitignored; never commit real secrets.
+#
+# For local dev without a real Meta account, run `npm run mock:meta` (in a
+# separate terminal) and uncomment META_GRAPH_BASE_URL below. Any values for
+# the four secrets are fine — the mock accepts anything.
+
+# --- Meta / WhatsApp Cloud API ---
+# Full messages endpoint for your phone number:
+#   https://graph.facebook.com/v22.0/<phone-number-id>
+META_WA_ENDPOINT=https://graph.facebook.com/v22.0/REPLACE_PHONE_NUMBER_ID
+# Permanent system-user bearer token
+META_WA_TOKEN=REPLACE_ME
+# Webhook verify token (any random string; must match what you set in Meta)
+META_WH_TOKEN=REPLACE_ME
+# App Secret for HMAC signature verification (Meta App → Settings → Basic)
+META_APP_SECRET=REPLACE_ME
+
+# --- Optional: point at local mock server (see: npm run mock:meta) ---
+# META_GRAPH_BASE_URL=http://localhost:4000

@@ -1,0 +1,15 @@
+# Copy to `.dev.vars` and fill in — `wrangler dev` reads it automatically.
+# `.dev.vars` is gitignored; never commit real secrets.
+
+# --- Meta / WhatsApp Cloud API ---
+META_WA_ENDPOINT=https://graph.facebook.com/v22.0/REPLACE_PHONE_NUMBER_ID
+META_WA_TOKEN=REPLACE_ME
+META_WH_TOKEN=REPLACE_ME
+META_APP_SECRET=REPLACE_ME
+
+# --- Vercel AI SDK provider (Gemini in this example) ---
+# https://ai.google.dev/aistudio  →  Create API key
+GEMINI_API_KEY=REPLACE_ME
+
+# --- Optional: local mock Meta ---
+# META_GRAPH_BASE_URL=http://localhost:4000
