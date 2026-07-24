@@ -48,7 +48,7 @@ LANGFUSE_ENVIRONMENT  = "production"                  # optional tag
 Construct once per isolate:
 
 ```ts
-import { NoOpTracer, LangfuseTracer, type Tracer } from 'wa-agent';
+import { NoOpTracer, LangfuseTracer, type Tracer } from '@emerleite/wa-agent';
 
 function makeTracer(env: Env): Tracer {
   if (!env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return new NoOpTracer();
@@ -70,7 +70,7 @@ The framework does NOT couple `Tracer` to `AgentLoop` — you compose them manua
 The typical turn wrapper:
 
 ```ts
-import { AgentLoop, LangfuseTracer, NoOpTracer } from 'wa-agent';
+import { AgentLoop, LangfuseTracer, NoOpTracer } from '@emerleite/wa-agent';
 
 const tracer = env.LANGFUSE_PUBLIC_KEY
   ? new LangfuseTracer({ publicKey: env.LANGFUSE_PUBLIC_KEY, secretKey: env.LANGFUSE_SECRET_KEY })

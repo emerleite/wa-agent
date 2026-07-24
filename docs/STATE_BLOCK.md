@@ -17,7 +17,7 @@ The fix is boring but reliable: on every turn, inject a *state block* at the top
 ## Minimal example
 
 ```ts
-import { formatStateBlock } from 'wa-agent';
+import { formatStateBlock } from '@emerleite/wa-agent';
 
 const draft = {
   day: '2026-08-01',
@@ -51,7 +51,7 @@ The `time` and `notes` fields (null / empty) are skipped automatically. Once eve
 The state block goes at the top of the system prompt, above your standard scope + rules:
 
 ```ts
-import { AgentLoop, formatStateBlock } from 'wa-agent';
+import { AgentLoop, formatStateBlock } from '@emerleite/wa-agent';
 
 const BASE_PROMPT = `You are BookBot, a reservation assistant.
 

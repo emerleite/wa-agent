@@ -17,7 +17,7 @@
 	"dependencies": {
 		"hono": "^4.4.4",
 		"openai": "~4.57.0",
-		"wa-agent": "file:../.."
+		"@emerleite/wa-agent": "file:../.."
 	},
 	"devDependencies": {
 		"@hono/node-server": "^2.0.6",

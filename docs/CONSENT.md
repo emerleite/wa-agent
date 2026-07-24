@@ -16,7 +16,7 @@ The store ships with a pipeline gate (`consentGate`) that short-circuits the tur
 ## Setup
 
 ```ts
-import { ConsentStore, consentGate, Agent, defaultPipeline } from 'wa-agent';
+import { ConsentStore, consentGate, Agent, defaultPipeline } from '@emerleite/wa-agent';
 
 const consents = new ConsentStore({ db: env.DB });
 
@@ -99,7 +99,7 @@ agent.button('consent_ai_processing', async ({ user, reply, inbound }) => {
 The gate accepts an `onBlocked` callback for emitting telemetry when consent is missing. Pair it with the framework event stream:
 
 ```ts
-import { stampBase } from 'wa-agent';
+import { stampBase } from '@emerleite/wa-agent';
 
 consentGate({
   store: consents,

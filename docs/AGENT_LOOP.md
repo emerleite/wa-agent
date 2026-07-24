@@ -64,7 +64,7 @@ Apply the new migrations to your D1:
 
 ```bash
 wrangler d1 migrations apply <your-db> \
-  --migrations-dir node_modules/wa-agent/migrations
+  --migrations-dir node_modules/@emerleite/wa-agent/migrations
 ```
 
 The two new tables are `agent_turns` (022) and a `turn_id` column added to `ai_call_log` (023).
@@ -80,8 +80,8 @@ import {
   ToolRegistry,
   AICallLedger,
   type AgentTool,
-} from 'wa-agent';
-import { createAISDKAgentLLM } from 'wa-agent/ai-sdk';
+} from '@emerleite/wa-agent';
+import { createAISDKAgentLLM } from '@emerleite/wa-agent/ai-sdk';
 
 interface Ctx { env: Env; whatsapp: string }
 
@@ -239,7 +239,7 @@ The framework speaks the `AgentLLM` interface. The shipped adapter wraps Vercel 
 ### Shipped adapter (Vercel AI SDK)
 
 ```ts
-import { createAISDKAgentLLM } from 'wa-agent/ai-sdk';
+import { createAISDKAgentLLM } from '@emerleite/wa-agent/ai-sdk';
 import { google } from '@ai-sdk/google';
 import { openai } from '@ai-sdk/openai';
 
@@ -255,7 +255,7 @@ The adapter runs the AI SDK with `stopWhen: stepCountIs(1)` — the framework's 
 Implement `AgentLLM`:
 
 ```ts
-import type { AgentLLM, AgentLLMArgs, AgentLLMResult } from 'wa-agent';
+import type { AgentLLM, AgentLLMArgs, AgentLLMResult } from '@emerleite/wa-agent';
 
 const myLLM: AgentLLM = {
   async generate(args: AgentLLMArgs): Promise<AgentLLMResult> {

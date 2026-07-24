@@ -19,7 +19,7 @@ The queue only fires when `mode === 'assisted'` AND `reviewQueue` is set on the 
 ## Setup
 
 ```ts
-import { Agent, AgentReviewQueue } from 'wa-agent';
+import { Agent, AgentReviewQueue } from '@emerleite/wa-agent';
 
 const reviewQueue = new AgentReviewQueue({ db: env.DB });
 

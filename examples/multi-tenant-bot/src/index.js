@@ -24,7 +24,7 @@ import {
 	mountMultiTenantWebhook,
 	OpenAIAssistant,
 	RateLimit,
-} from 'wa-agent';
+} from '@emerleite/wa-agent';
 import { AzureOpenAI } from 'openai';
 
 let app, registry;

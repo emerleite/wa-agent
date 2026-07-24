@@ -2,6 +2,23 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.13.1] — 2026-07-24
+
+### Changed
+
+- **Renamed the npm package from `wa-agent` to `@emerleite/wa-agent`.** The bare `wa-agent` name on the registry belongs to an unrelated squatted 0.1.1 from 2021 that we can't reclaim; scoping under `@emerleite` is the standard workaround and matches how other projects handle it (`next` vs Next.js, `vite` vs Vite are lucky exceptions).
+  - **Consumers:** update to `npm install @emerleite/wa-agent`. Every import specifier changes from `'wa-agent'` → `'@emerleite/wa-agent'` (and same for the subpath exports `/hono` and `/ai-sdk`). Nothing else in the code has to change.
+  - **CLI:** `npx @emerleite/wa-agent init [dir] [--template=<name>]` (the bin field is still named `wa-agent`, so `npm exec wa-agent init` also works from an installed project).
+  - **Scaffold rewriting rules updated** — the `bin/wa-agent.js` CLI now rewrites paths to `node_modules/@emerleite/wa-agent/...` and installs the scoped dep in scaffolded `package.json`.
+  - **Docs updated end-to-end** — every doc + README + example was rewritten to use the scoped name in imports, install commands, and `node_modules/*` paths. Framework prose still refers to "wa-agent" the framework (like Next.js refers to itself as Next.js, not `next`).
+  - **Historical CHANGELOG entries below are left as-written** — they describe what shipped at each version and are read-only history. The rename doesn't invalidate any prior release.
+
+### Notes
+
+No code changes; identical binary content to 0.13.0. The one-and-only reason for the version bump is to give the rename a clean marker so tooling that compares installed versions has something to react to.
+
+1057 tests still passing; typecheck clean.
+
 ## [0.13.0] — 2026-07-24
 
 ### Added

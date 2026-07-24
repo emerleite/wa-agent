@@ -1,6 +1,6 @@
 # Scaffold CLI — `wa-agent init`
 
-The framework ships a small zero-dep Node CLI at `bin/wa-agent.js`, exposed as `wa-agent` when installed as a package. Its job is to reduce onboarding from "read the README, cross-reference the migration path, copy one of the examples, rewrite half of it" to `npx wa-agent init my-bot && cd my-bot && npm run dev`.
+The framework ships a small zero-dep Node CLI at `bin/wa-agent.js`, exposed as `wa-agent` when installed as a package. Its job is to reduce onboarding from "read the README, cross-reference the migration path, copy one of the examples, rewrite half of it" to `npx @emerleite/wa-agent init my-bot && cd my-bot && npm run dev`.
 
 Introduced in v0.11.2.
 
@@ -8,7 +8,7 @@ Introduced in v0.11.2.
 
 ```
 Usage:
-  npx wa-agent init [dir] [--template=<name>]
+  npx @emerleite/wa-agent init [dir] [--template=<name>]
 
 Templates:
   echo-bot (default)     — 30-line reply-loop, no AI
@@ -22,12 +22,12 @@ If `[dir]` is omitted, the CLI prompts for it. Refuses to write to a non-empty d
 
 ## What it does
 
-For a call like `npx wa-agent init my-bot --template=tool-agent`, the CLI:
+For a call like `npx @emerleite/wa-agent init my-bot --template=tool-agent`, the CLI:
 
-1. Finds the template on disk under `node_modules/wa-agent/examples/tool-agent/` (or the local `examples/` when run from the wa-agent checkout).
+1. Finds the template on disk under `node_modules/@emerleite/wa-agent/examples/tool-agent/` (or the local `examples/` when run from the wa-agent checkout).
 2. Recursively copies every file into `./my-bot/`, skipping `node_modules`, `.wrangler`, `dist`, and any pre-existing `.dev.vars`.
 3. Rewrites:
-   - **`package.json`** — sets `name` to the target dir's basename, replaces the `file:../..` dev-time dep with `^<current wa-agent version>`, and rewrites every script path from `../../migrations` / `../../tools/mock-meta-server.ts` to `node_modules/wa-agent/migrations` / `node_modules/wa-agent/tools/mock-meta-server.ts` so the scripts work from a real npm install.
+   - **`package.json`** — sets `name` to the target dir's basename, replaces the `file:../..` dev-time dep with `^<current wa-agent version>`, and rewrites every script path from `../../migrations` / `../../tools/mock-meta-server.ts` to `node_modules/@emerleite/wa-agent/migrations` / `node_modules/@emerleite/wa-agent/tools/mock-meta-server.ts` so the scripts work from a real npm install.
    - **`wrangler.toml`** — replaces the template's worker `name`, `database_name`, and any comment references to the template name (e.g. `echo-bot` → `my-bot`).
    - **`README.md` + `.dev.vars.example`** — same `../../` path rewrites and template-name substitutions so the doc matches reality.
 4. Writes a `.gitignore` if the template didn't ship one.
@@ -69,8 +69,8 @@ The CLI applies string substitutions to keep the scaffolded project self-contain
 |---|---|---|
 | `package.json` `name` | template name | target dir basename |
 | `package.json` `dependencies["wa-agent"]` | `file:../..` | `^<current version>` |
-| `package.json` `scripts.*` values | `../../migrations` | `node_modules/wa-agent/migrations` |
-| `package.json` `scripts.*` values | `../../tools/mock-meta-server.ts` | `node_modules/wa-agent/tools/mock-meta-server.ts` |
+| `package.json` `scripts.*` values | `../../migrations` | `node_modules/@emerleite/wa-agent/migrations` |
+| `package.json` `scripts.*` values | `../../tools/mock-meta-server.ts` | `node_modules/@emerleite/wa-agent/tools/mock-meta-server.ts` |
 | `wrangler.toml` | `<template-name>` (whole-word) | target dir basename |
 | `README.md` | same paths as above + `<template-name>` | rewritten |
 | `.dev.vars.example` | same | rewritten |
@@ -84,7 +84,7 @@ For a consumer team that repeatedly scaffolds a specific shape:
 1. Drop a directory under `examples/<my-shape>/` in your fork.
 2. Follow the existing conventions: `package.json` with `wa-agent` at `file:../..`, `wrangler.toml` with `name = "my-shape"` and `database_name = "my-shape"`, a `.dev.vars.example`, a `README.md` that matches the shape.
 3. Add the template name to the `TEMPLATES` array in `bin/wa-agent.js`.
-4. Publish your fork (or use it locally). Consumers invoke with `npx wa-agent init my-bot --template=my-shape`.
+4. Publish your fork (or use it locally). Consumers invoke with `npx @emerleite/wa-agent init my-bot --template=my-shape`.
 
 The CLI substitutes `<my-shape>` → the target dir basename automatically as long as you named things consistently.
 

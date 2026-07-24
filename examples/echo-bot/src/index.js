@@ -5,7 +5,7 @@
  * webhook → coalesce → reply loop. No AI, no broadcast, no plans.
  */
 import { Hono } from 'hono';
-import { Agent, mountWebhook } from 'wa-agent';
+import { Agent, mountWebhook } from '@emerleite/wa-agent';
 
 // Built lazily on the first request because env bindings are not available at module-load time.
 let app, agent;

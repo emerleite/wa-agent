@@ -54,7 +54,7 @@ Prefer the lowest-cost layer that proves the thing. A pure regex normalizer does
 
 `npm run check:hardcoded` fails if external service URLs appear inlined in source instead of coming from env. Framework maintainer note: wa-agent's own source can legitimately host `graph.facebook.com` as the default `WhatsAppClient.graphBase`. That specific line is escaped with `// hardcoded:allow`. Any *new* framework-level default that needs an inline URL should follow the same pattern.
 
-Consumers see this same script under `node_modules/wa-agent/scripts/check-hardcoded.sh` — they run it in their CI, extending via `HARDCODED_EXTRA_PATTERNS` for their own domains.
+Consumers see this same script under `node_modules/@emerleite/wa-agent/scripts/check-hardcoded.sh` — they run it in their CI, extending via `HARDCODED_EXTRA_PATTERNS` for their own domains.
 
 ## Working on the AI SDK adapter
 
@@ -62,7 +62,7 @@ Consumers see this same script under `node_modules/wa-agent/scripts/check-hardco
 
 ## Working on the scaffold CLI
 
-`bin/wa-agent.js` uses only Node built-ins — no `zod`, no `ai`, no anything. Keep it that way; every dep in `bin/` is a dep every `npx wa-agent init` user pays for. To smoke-test:
+`bin/wa-agent.js` uses only Node built-ins — no `zod`, no `ai`, no anything. Keep it that way; every dep in `bin/` is a dep every `npx @emerleite/wa-agent init` user pays for. To smoke-test:
 
 ```sh
 node bin/wa-agent.js init /tmp/scratch --template=echo-bot

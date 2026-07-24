@@ -29,8 +29,8 @@ import {
 	ConversationMemory,
 	ToolRegistry,
 	AICallLedger,
-} from 'wa-agent';
-import { createAISDKAgentLLM } from 'wa-agent/ai-sdk';
+} from '@emerleite/wa-agent';
+import { createAISDKAgentLLM } from '@emerleite/wa-agent/ai-sdk';
 
 const SYSTEM_PROMPT = `You are ScheduleBot, an appointment assistant.
 

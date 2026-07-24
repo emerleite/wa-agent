@@ -16,7 +16,7 @@
 		"@ai-sdk/google": "^2.0.0",
 		"ai": "^6.0.0",
 		"hono": "^4.4.4",
-		"wa-agent": "file:../..",
+		"@emerleite/wa-agent": "file:../..",
 		"zod": "^3.25.76"
 	},
 	"devDependencies": {

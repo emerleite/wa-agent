@@ -26,7 +26,7 @@ import {
   CircuitBreaker,
   OpenAICompatProvider,
   WorkersAIProvider,
-} from 'wa-agent';
+} from '@emerleite/wa-agent';
 
 const breaker = new CircuitBreaker();
 const ledger = new AICallLedger({ db: env.DB });
@@ -112,7 +112,7 @@ For non-OpenAI shapes (Anthropic Messages API, custom in-house endpoints), imple
 `envChainResolver(env)` is a one-liner for the env-var pattern:
 
 ```ts
-import { envChainResolver } from 'wa-agent';
+import { envChainResolver } from '@emerleite/wa-agent';
 
 new AIRouter({
   providers: { /* ... */ },

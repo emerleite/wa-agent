@@ -18,7 +18,7 @@ import {
   normalizeBrazilianPhone,
   localizeBrazilianPhone,
   formatBrazilianPhone,
-} from 'wa-agent';
+} from '@emerleite/wa-agent';
 
 digits('+55 (11) 98888-7777')
 // → '5511988887777'
@@ -64,7 +64,7 @@ LLMs emit Markdown (`**bold**`, `## Header`, `- item`, `[t](u)`). WhatsApp uses 
 ### API
 
 ```ts
-import { formatForWhatsapp } from 'wa-agent';
+import { formatForWhatsapp } from '@emerleite/wa-agent';
 
 formatForWhatsapp('**hello** world')
 // → '*hello* world'
@@ -101,7 +101,7 @@ Even with strict "reply with JSON only" prompts, models occasionally wrap answer
 ### API
 
 ```ts
-import { extractFirstJsonObject, tryExtractFirstJsonObject } from 'wa-agent';
+import { extractFirstJsonObject, tryExtractFirstJsonObject } from '@emerleite/wa-agent';
 
 extractFirstJsonObject<{ intent: string; score: number }>(
   '```json\n{"intent":"book","score":0.9}\n```',
@@ -128,7 +128,7 @@ The parser is brace-aware and string-aware: `{"s":"has } brace"}` parses correct
 ### Recipe: soft-fail parsing in an intent classifier
 
 ```ts
-import { AIRouter, tryExtractFirstJsonObject } from 'wa-agent';
+import { AIRouter, tryExtractFirstJsonObject } from '@emerleite/wa-agent';
 
 interface Intent { intent: 'book' | 'cancel' | 'unknown'; confidence: number }
 
@@ -154,7 +154,7 @@ Distinct from `R2Cache` (framework-cached TTS output keyed by hash) — `R2Media
 ### API
 
 ```ts
-import { R2MediaStore } from 'wa-agent';
+import { R2MediaStore } from '@emerleite/wa-agent';
 
 const media = new R2MediaStore({
   bucket: env.MEDIA_BUCKET,
@@ -217,7 +217,7 @@ Use both if you need both. They're independent.
 ### API
 
 ```ts
-import { log } from 'wa-agent';
+import { log } from '@emerleite/wa-agent';
 
 log.start('agent.drain', 'user=5511999');
 log.success('agent.drain', 'processed 5', { batches: 3 });

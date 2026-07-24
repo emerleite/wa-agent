@@ -32,7 +32,7 @@ wrangler secret put META_APP_SECRET
 wrangler secret put GEMINI_API_KEY        # or configure another provider
 
 # 5. Install runtime deps
-npm install wa-agent hono ai @ai-sdk/google zod
+npm install @emerleite/wa-agent hono ai @ai-sdk/google zod
 
 # 6. Deploy
 wrangler deploy

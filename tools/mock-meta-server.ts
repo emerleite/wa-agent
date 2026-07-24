@@ -4,7 +4,7 @@
  * or spamming real WhatsApp numbers.
  *
  * USAGE
- *   npx tsx node_modules/wa-agent/tools/mock-meta-server.ts
+ *   npx tsx node_modules/@emerleite/wa-agent/tools/mock-meta-server.ts
  *   # or, if you have wa-agent checked out:
  *   npm run mock:meta
  *

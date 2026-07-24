@@ -3,8 +3,8 @@
  * wa-agent CLI — currently one subcommand: `init`.
  *
  * Usage:
- *   npx wa-agent init [dir] [--template=echo-bot|tool-agent|support-bot|multi-tenant-bot]
- *   npx wa-agent --help
+ *   npx @emerleite/wa-agent init [dir] [--template=echo-bot|tool-agent|support-bot|multi-tenant-bot]
+ *   npx @emerleite/wa-agent --help
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -39,14 +39,14 @@ function printHelp() {
 	console.log(`wa-agent — CLI
 
 Usage:
-  npx wa-agent init [dir] [--template=<name>]     scaffold a new bot
+  npx @emerleite/wa-agent init [dir] [--template=<name>]     scaffold a new bot
 
 Templates:
   ${TEMPLATES.map((t) => (t === DEFAULT_TEMPLATE ? `${t} (default)` : t)).join('\n  ')}
 
 Examples:
-  npx wa-agent init my-bot
-  npx wa-agent init my-support --template=support-bot
+  npx @emerleite/wa-agent init my-bot
+  npx @emerleite/wa-agent init my-support --template=support-bot
 `);
 }
 
@@ -92,7 +92,7 @@ async function init(args) {
 	const templateDir = join(PKG_ROOT, 'examples', template);
 	if (!existsSync(templateDir)) {
 		console.error(`Template not found on disk: ${templateDir}`);
-		console.error('This CLI must be run from an installed wa-agent (npx wa-agent init ...).');
+		console.error('This CLI must be run from an installed wa-agent (npx @emerleite/wa-agent init ...).');
 		process.exit(1);
 	}
 
@@ -134,14 +134,14 @@ function transform({ name, contents }, { projectName, template }) {
 	// so the scaffolded project stands alone.
 	const rewriteText = (input) =>
 		input
-			.replaceAll('../../migrations', 'node_modules/wa-agent/migrations')
-			.replaceAll('../../tools/mock-meta-server.ts', 'node_modules/wa-agent/tools/mock-meta-server.ts')
+			.replaceAll('../../migrations', 'node_modules/@emerleite/wa-agent/migrations')
+			.replaceAll('../../tools/mock-meta-server.ts', 'node_modules/@emerleite/wa-agent/tools/mock-meta-server.ts')
 			.replaceAll(new RegExp(`\\b${escapeRegex(template)}\\b`, 'g'), projectName);
 
 	if (name === 'package.json') {
 		const pkg = JSON.parse(contents.toString('utf8'));
-		if (pkg.dependencies?.['wa-agent']?.startsWith('file:')) {
-			pkg.dependencies['wa-agent'] = `^${waVersion}`;
+		if (pkg.dependencies?.['@emerleite/wa-agent']?.startsWith('file:')) {
+			pkg.dependencies['@emerleite/wa-agent'] = `^${waVersion}`;
 		}
 		pkg.name = projectName;
 		pkg.description = pkg.description || 'wa-agent bot';

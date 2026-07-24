@@ -360,4 +360,4 @@ Scripts read `.dev.vars` (development) by default. For another env:
 ENV_FILE=.dev.vars.staging bash scripts/meta-templates.sh list
 ```
 
-The scripts ship inside the `wa-agent` package — once installed, copy from `node_modules/wa-agent/scripts/` to your repo and adapt as needed.
+The scripts ship inside the `wa-agent` package — once installed, copy from `node_modules/@emerleite/wa-agent/scripts/` to your repo and adapt as needed.

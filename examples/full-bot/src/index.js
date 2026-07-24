@@ -67,7 +67,7 @@ import {
 	SlackNotifier,
 	LLMCostCalculator,
 	ConsentStore,
-} from 'wa-agent';
+} from '@emerleite/wa-agent';
 
 // Typed preference for delivery format
 const deliveryMode = definePreference('delivery_mode', 'both', ['text', 'audio', 'both']);

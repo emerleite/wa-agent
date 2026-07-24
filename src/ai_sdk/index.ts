@@ -8,8 +8,8 @@
  *
  * USAGE
  *   import { google } from '@ai-sdk/google';
- *   import { AgentLoop, ConversationMemory, ToolRegistry } from 'wa-agent';
- *   import { createAISDKAgentLLM } from 'wa-agent/ai-sdk';
+ *   import { AgentLoop, ConversationMemory, ToolRegistry } from '@emerleite/wa-agent';
+ *   import { createAISDKAgentLLM } from '@emerleite/wa-agent/ai-sdk';
  *
  *   const loop = new AgentLoop({
  *     llm: createAISDKAgentLLM(google('gemini-2.5-flash')),

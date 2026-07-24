@@ -31,7 +31,7 @@ You're going to want `/admin/*` routes for ops work (view queue, replay a failed
 `requireAdminAuth` handles both in one guard:
 
 ```ts
-import { requireAdminAuth } from 'wa-agent';
+import { requireAdminAuth } from '@emerleite/wa-agent';
 
 app.get('/admin/queue', (c) => {
   const guard = requireAdminAuth(c.req.raw, {
@@ -80,7 +80,7 @@ Reusable pattern for phone-owner verification without SMS — you already have t
 ### Generation
 
 ```ts
-import { generateOtpCode, hashOtpCode } from 'wa-agent';
+import { generateOtpCode, hashOtpCode } from '@emerleite/wa-agent';
 
 const code = generateOtpCode();                       // "482913"  (6-digit default)
 const codeHash = await hashOtpCode(code, phone);      // sha256(`${code}:${phone}`) hex
@@ -94,7 +94,7 @@ const codeHash = await hashOtpCode(code, phone);      // sha256(`${code}:${phone
 ### Verification
 
 ```ts
-import { hashOtpCode, timingSafeStringEqual } from 'wa-agent';
+import { hashOtpCode, timingSafeStringEqual } from '@emerleite/wa-agent';
 
 const expected = await hashOtpCode(userInputCode, phone);
 if (!timingSafeStringEqual(expected, storedHash)) {
@@ -131,7 +131,7 @@ CREATE INDEX idx_otps_active ON otps(broker_id, expires_at, used_at);
 After a successful OTP verify, issue a session:
 
 ```ts
-import { generateRandomToken, hashSessionToken, serializeCookie } from 'wa-agent';
+import { generateRandomToken, hashSessionToken, serializeCookie } from '@emerleite/wa-agent';
 
 const token = generateRandomToken();                      // 32-byte hex, ~256 bits
 const tokenHash = await hashSessionToken(token);
@@ -163,7 +163,7 @@ return new Response(null, {
 ### Verifying a session on a subsequent request
 
 ```ts
-import { getCookie, hashSessionToken } from 'wa-agent';
+import { getCookie, hashSessionToken } from '@emerleite/wa-agent';
 
 app.get('/portal/*', async (c) => {
   const token = getCookie(c.req.raw, 'session');
@@ -182,7 +182,7 @@ app.get('/portal/*', async (c) => {
 ### Clearing a session (logout)
 
 ```ts
-import { clearCookie } from 'wa-agent';
+import { clearCookie } from '@emerleite/wa-agent';
 
 return new Response(null, {
   status: 302,
@@ -202,7 +202,7 @@ return new Response(null, {
 Handled for you inside `mountWebhook`. If you're not using the Hono helper, verify manually:
 
 ```ts
-import { verifyMetaSignature } from 'wa-agent';
+import { verifyMetaSignature } from '@emerleite/wa-agent';
 
 const raw = await req.arrayBuffer();
 const valid = await verifyMetaSignature(env.META_APP_SECRET, raw, req.headers.get('X-Hub-Signature-256'));
@@ -231,7 +231,7 @@ See `src/security/blocklist.ts` for the full API (block reasons, TTL, extra colu
 KV-backed sliding-window limiter for the webhook itself:
 
 ```ts
-import { RateLimit, KvRateLimitStore, honoRateLimit } from 'wa-agent';
+import { RateLimit, KvRateLimitStore, honoRateLimit } from '@emerleite/wa-agent';
 
 const limit = new RateLimit(new KvRateLimitStore(env.KV, 'rl'), { requests: 60, windowSeconds: 60 });
 app.use('/wa/webhook', honoRateLimit(limit, (c) => c.req.header('cf-connecting-ip') ?? 'unknown'));

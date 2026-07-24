@@ -30,7 +30,7 @@ import {
 	KvRateLimitStore,
 	RateLimit,
 	HeuristicFallbackClassifier,
-} from 'wa-agent';
+} from '@emerleite/wa-agent';
 
 const tagWa = createUtmTagger({ source: 'whatsapp' });
 

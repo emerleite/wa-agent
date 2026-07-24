@@ -10,13 +10,13 @@ A Hono server that impersonates the Meta Graph API so your Worker can send messa
 
 ```sh
 # From a consumer app (wa-agent installed via npm):
-npx tsx node_modules/wa-agent/tools/mock-meta-server.ts
+npx tsx node_modules/@emerleite/wa-agent/tools/mock-meta-server.ts
 
 # From the wa-agent repo:
 npm run mock:meta
 
 # Custom port:
-MOCK_META_PORT=5555 npx tsx node_modules/wa-agent/tools/mock-meta-server.ts
+MOCK_META_PORT=5555 npx tsx node_modules/@emerleite/wa-agent/tools/mock-meta-server.ts
 ```
 
 Boots on port `4000` by default and prints every received call to stdout.

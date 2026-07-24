@@ -5,7 +5,7 @@ A WhatsApp Cloud API agent framework for Cloudflare Workers. Extracted from a pr
 **Cloudflare-native by design.** Uses D1 for durable state, R2 for media caching, Workers for compute, and the cron trigger for scheduled outreach. No Durable Objects required, no external queue service, no managed database — just bindings.
 
 ```js
-import { Agent, mountWebhook } from 'wa-agent'
+import { Agent, mountWebhook } from '@emerleite/wa-agent'
 import { Hono } from 'hono'
 
 const app = new Hono()
@@ -89,7 +89,7 @@ Cron jobs run alongside webhook traffic:
 Scaffold a runnable bot in one command:
 
 ```bash
-npx wa-agent init my-bot
+npx @emerleite/wa-agent init my-bot
 cd my-bot
 npm install
 cp .dev.vars.example .dev.vars   # then fill in Meta secrets
@@ -108,17 +108,17 @@ echo 'META_GRAPH_BASE_URL=http://localhost:4000' >> .dev.vars
 Templates:
 
 ```bash
-npx wa-agent init my-bot                             # echo-bot (default)
-npx wa-agent init my-tools --template=tool-agent     # AgentLoop + Zod tools
-npx wa-agent init my-support --template=support-bot  # pipeline (intent → policy → LLM)
-npx wa-agent init my-bsp --template=multi-tenant-bot # BSP-style, many numbers
-npx wa-agent init my-all --template=full-bot         # every primitive (reference)
+npx @emerleite/wa-agent init my-bot                             # echo-bot (default)
+npx @emerleite/wa-agent init my-tools --template=tool-agent     # AgentLoop + Zod tools
+npx @emerleite/wa-agent init my-support --template=support-bot  # pipeline (intent → policy → LLM)
+npx @emerleite/wa-agent init my-bsp --template=multi-tenant-bot # BSP-style, many numbers
+npx @emerleite/wa-agent init my-all --template=full-bot         # every primitive (reference)
 ```
 
 ## Install (manual)
 
 ```bash
-npm install wa-agent hono openai
+npm install @emerleite/wa-agent hono openai
 ```
 
 `hono` and `openai` are optional peers — pull them only if you use them.
@@ -127,7 +127,7 @@ Apply the migrations to your D1 database:
 
 ```bash
 wrangler d1 migrations apply <your-db> \
-  --migrations-dir node_modules/wa-agent/migrations
+  --migrations-dir node_modules/@emerleite/wa-agent/migrations
 ```
 
 The migrations are layered so you only enable the pieces you need:
@@ -330,7 +330,7 @@ for (const u of users) {
 Pluggable subscription lookup and feature gating. Most apps store paid status outside the bot (Stripe, your billing service). `TierProvider` is the interface; `HttpTierProvider` is a ready-made HTTP-backed implementation with a 60-second in-memory cache.
 
 ```js
-import { HttpTierProvider, AccessGate, Upsell } from 'wa-agent'
+import { HttpTierProvider, AccessGate, Upsell } from '@emerleite/wa-agent'
 
 const tierProvider = new HttpTierProvider({
 	baseUrl: 'https://billing.example.com/subscriptions',
@@ -374,7 +374,7 @@ agent.onText(async ({ user, text, reply, gate, session }) => {
 First-contact composition. Pass it to the `Agent` and it fires automatically when a user messages for the first time.
 
 ```js
-import { OnboardingFlow } from 'wa-agent'
+import { OnboardingFlow } from '@emerleite/wa-agent'
 
 const onboarding = new OnboardingFlow({
 	client,
@@ -426,7 +426,7 @@ await upsell.sendSmart(whatsapp)    // picks based on lead.funnel_state
 Generic BM25 + LIKE + Reciprocal Rank Fusion search over any FTS5-backed table.
 
 ```js
-import { HybridSearch, buildSearchSchema } from 'wa-agent'
+import { HybridSearch, buildSearchSchema } from '@emerleite/wa-agent'
 
 // Once at deploy: build the FTS5 mirror of your content table
 for (const sql of buildSearchSchema({
@@ -453,7 +453,7 @@ HTMX-based admin dashboard with default cards over the framework's tables and pl
 
 ```js
 import { Hono } from 'hono'
-import { Dashboard, defaultCards } from 'wa-agent'
+import { Dashboard, defaultCards } from '@emerleite/wa-agent'
 
 const app = new Hono()
 const dash = new Dashboard({
@@ -498,7 +498,7 @@ The framework's `ai` and `summarizer` slots accept anything matching the structu
 
 ```js
 import { AzureOpenAI } from 'openai'
-import { OpenAIAssistant, Summarizer } from 'wa-agent'
+import { OpenAIAssistant, Summarizer } from '@emerleite/wa-agent'
 
 const azure = new AzureOpenAI({
   endpoint: env.AZURE_OPENAI_ENDPOINT,
@@ -535,7 +535,7 @@ Works against OpenAI directly, Azure OpenAI, or the Cloudflare AI Gateway base U
 Daily window during which the bot doesn't send messages. Wrap any send site (broadcast, cron, reactive ad delivery, even on-demand replies) for a polite no-3am-pings policy.
 
 ```js
-import { QuietHours } from 'wa-agent'
+import { QuietHours } from '@emerleite/wa-agent'
 
 const qh = new QuietHours({ start: '22:00', end: '06:00', timezone: 'America/Sao_Paulo' })
 
@@ -560,7 +560,7 @@ await broadcast.run({
 Per-number abuse blocklist with a 5-minute per-isolate cache. Hot-path-friendly — every inbound message can be checked cheaply, and new blocks propagate across isolates within the TTL without external coordination. Pass it to the Agent and `handleBatch` drops blocked inbound messages before any handler runs:
 
 ```js
-import { Blocklist } from 'wa-agent'
+import { Blocklist } from '@emerleite/wa-agent'
 
 const blocklist = new Blocklist({ db: agent.db })  // or createDb(env.DB) if before agent
 const agent = new Agent({ /* ... */, db: env.DB, blocklist })
@@ -594,7 +594,7 @@ Most apps don't need to touch these directly — the Agent calls them from `buil
 Per-user, per-feature usage log. Powers daily caps, lifetime quotas, conversion analytics, and abuse-detection dashboards.
 
 ```js
-import { UsageCounter } from 'wa-agent'
+import { UsageCounter } from '@emerleite/wa-agent'
 
 const usage = new UsageCounter({ db: env.DB })
 
@@ -626,7 +626,7 @@ const dauForFeature = await usage.distinctUsersSince('image_gen', { sinceHoursAg
 Per-user, per-key preferences. Adding a new preference type takes zero migrations — just call `set()` with a new key.
 
 ```js
-import { PreferenceStore, definePreference } from 'wa-agent'
+import { PreferenceStore, definePreference } from '@emerleite/wa-agent'
 
 const prefs = new PreferenceStore({ db: env.DB })
 
@@ -682,7 +682,7 @@ Stores accept an `emit?: Emit` callback if you want to wire them outside the Age
 `makeEmit` is generic over the schema. Consumers with their own discriminated union reuse the validation + stamping + AE-write infrastructure:
 
 ```js
-import { makeEmit } from 'wa-agent'
+import { makeEmit } from '@emerleite/wa-agent'
 import { MyEventSchema } from './events.js'  // your own z.discriminatedUnion('type', [...])
 
 const emit = makeEmit({
@@ -703,7 +703,7 @@ The custom schema must include the post-`stampBase` fields (`v: 1`, `ts`, `trace
 Opinionated composition: classify, gate, respond, audit. Opt in by passing a `pipeline` to the Agent; `reply.ai(text)` routes through it instead of calling `AIClient.chat()` directly.
 
 ```js
-import { defaultPipeline, LLMIntentClassifier, PolicyGate } from 'wa-agent'
+import { defaultPipeline, LLMIntentClassifier, PolicyGate } from '@emerleite/wa-agent'
 
 const INTENTS = ['question', 'booking', 'cancel', 'other']
 const classifier = new LLMIntentClassifier({
@@ -1076,8 +1076,8 @@ Extracted from a production codebase with ~50 cron messages/sec across hundreds 
 
 ### v0.11.2 — patch release (scaffold CLI):
 
-- **`npx wa-agent init [dir] [--template=<name>]`** (`bin/wa-agent.js`) — zero-dep Node scaffold that copies from `examples/<template>/` and rewrites paths + template name + wa-agent dep version so the scaffolded project stands alone. Templates: `echo-bot` (default), `tool-agent`, `support-bot`, `multi-tenant-bot`, `full-bot`.
-- **`examples/` published in the npm tarball** — CLI copies from `node_modules/wa-agent/examples/`. Adds ~40 KB for a large DX win.
+- **`npx @emerleite/wa-agent init [dir] [--template=<name>]`** (`bin/wa-agent.js`) — zero-dep Node scaffold that copies from `examples/<template>/` and rewrites paths + template name + wa-agent dep version so the scaffolded project stands alone. Templates: `echo-bot` (default), `tool-agent`, `support-bot`, `multi-tenant-bot`, `full-bot`.
+- **`examples/` published in the npm tarball** — CLI copies from `node_modules/@emerleite/wa-agent/examples/`. Adds ~40 KB for a large DX win.
 - **`README.md` Quickstart** — one-command onboarding via the CLI.
 - **`docs/SCAFFOLD_CLI.md`** — templates, rewriting rules, adding a custom template.
 

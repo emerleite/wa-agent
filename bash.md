@@ -15,7 +15,7 @@ wrangler d1 execute <db-name> --remote --command="SELECT count(*) FROM messages"
 wrangler d1 execute <db-name> --local --file=./scripts/seed.sql
 
 # Apply framework migrations from an installed wa-agent
-wrangler d1 migrations apply <db-name> --local --migrations-dir node_modules/wa-agent/migrations
+wrangler d1 migrations apply <db-name> --local --migrations-dir node_modules/@emerleite/wa-agent/migrations
 
 # List applied migrations (miniflare)
 wrangler d1 execute <db-name> --local --command="SELECT * FROM d1_migrations ORDER BY id DESC LIMIT 20"
@@ -25,7 +25,7 @@ wrangler d1 execute <db-name> --local --command="SELECT * FROM d1_migrations ORD
 
 ```sh
 # Boot the fake graph.facebook.com (port 4000)
-npx tsx node_modules/wa-agent/tools/mock-meta-server.ts
+npx tsx node_modules/@emerleite/wa-agent/tools/mock-meta-server.ts
 
 # See what your bot sent
 curl -s http://localhost:4000/__received | jq .
@@ -56,14 +56,14 @@ The mount base is `/wa` by default. Change with `mountWebhook(agent, app, '/foo'
 
 ```sh
 # Check your token / webhook / templates state
-bash node_modules/wa-agent/scripts/meta-webhook.sh status
-bash node_modules/wa-agent/scripts/meta-templates.sh list
+bash node_modules/@emerleite/wa-agent/scripts/meta-webhook.sh status
+bash node_modules/@emerleite/wa-agent/scripts/meta-templates.sh list
 
 # Point a template at a new URL
-bash node_modules/wa-agent/scripts/meta-webhook.sh set-url https://mybot.workers.dev
+bash node_modules/@emerleite/wa-agent/scripts/meta-webhook.sh set-url https://mybot.workers.dev
 
 # Push .dev.vars → Cloudflare secrets
-bash node_modules/wa-agent/scripts/push-secrets.sh
+bash node_modules/@emerleite/wa-agent/scripts/push-secrets.sh
 ```
 
 See `docs/META_SETUP.md` for the full walkthrough of System Users, tokens, WABA IDs.
@@ -72,11 +72,11 @@ See `docs/META_SETUP.md` for the full walkthrough of System Users, tokens, WABA 
 
 ```sh
 # Catches inline URLs (Graph API, OpenAI, Anthropic, Langfuse, *.workers.dev)
-bash node_modules/wa-agent/scripts/check-hardcoded.sh
+bash node_modules/@emerleite/wa-agent/scripts/check-hardcoded.sh
 
 # Extend for your own patterns
 HARDCODED_EXTRA_PATTERNS='(customdomain\.com|internalapi\.host)' \
-  bash node_modules/wa-agent/scripts/check-hardcoded.sh
+  bash node_modules/@emerleite/wa-agent/scripts/check-hardcoded.sh
 ```
 
 Escape a single line with `// hardcoded:allow` when the URL is a legitimate default.

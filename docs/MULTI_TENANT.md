@@ -36,7 +36,7 @@ The registry is for the case where the *Agent itself* needs to differ.
 ### 1. Resolver + factory
 
 ```ts
-import { MultiTenantAgentRegistry, mountMultiTenantWebhook, Agent } from 'wa-agent';
+import { MultiTenantAgentRegistry, mountMultiTenantWebhook, Agent } from '@emerleite/wa-agent';
 
 const registry = new MultiTenantAgentRegistry({
   // phone_number_id → tenantId (KV lookup typically; cache TTL however you like)
@@ -96,7 +96,7 @@ Returning `null` produces a 503 (no tenants onboarded yet).
 Tenant resolution costs at least one KV read per inbound envelope. An attacker who guesses your webhook URL can burn KV reads at 1000+/sec. **Layer `honoRateLimit` on the webhook route before the registry mounts on it:**
 
 ```ts
-import { honoRateLimit, KvRateLimitStore, RateLimit } from 'wa-agent';
+import { honoRateLimit, KvRateLimitStore, RateLimit } from '@emerleite/wa-agent';
 
 app.use('/wa/webhook', (c, next) =>
   honoRateLimit(

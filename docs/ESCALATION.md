@@ -20,7 +20,7 @@ If you want to **gate the AI from replying** on certain inputs (crisis keywords,
 ## Setup
 
 ```ts
-import { Agent, EscalationStore, SlackNotifier } from 'wa-agent';
+import { Agent, EscalationStore, SlackNotifier } from '@emerleite/wa-agent';
 
 const escalations = new EscalationStore({
   db: env.DB,
