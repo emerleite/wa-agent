@@ -136,6 +136,23 @@ export { ChannelOptOuts } from './channel/channel_opt_outs.js';
 export type { ChannelOptOutsOptions } from './channel/channel_opt_outs.js';
 export type { ChannelOptOutRow } from './db/schema/channel_opt_outs.js';
 
+// Admin auth (dual Bearer / Basic guard for /admin/* endpoints)
+export { requireAdminAuth, timingSafeStringEqual } from './security/admin_auth.js';
+export type { AdminAuthConfig } from './security/admin_auth.js';
+
+// Crypto primitives (OTP + session token generation, SHA-256, salted hashes)
+export {
+	generateOtpCode,
+	generateRandomToken,
+	sha256Hex,
+	hashOtpCode,
+	hashSessionToken,
+} from './security/crypto.js';
+
+// Cookie helpers (session cookie serialization + parsing)
+export { serializeCookie, clearCookie, parseCookieHeader, getCookie } from './security/cookie.js';
+export type { CookieOptions } from './security/cookie.js';
+
 // Abuse blocklist (hot-path check at webhook boundary)
 export { Blocklist } from './security/blocklist.js';
 export type { BlocklistOptions, BlockArgs, ListBlockedOptions } from './security/blocklist.js';
@@ -348,6 +365,12 @@ export { digits, normalizeBrazilianPhone, localizeBrazilianPhone, formatBrazilia
 export { extractFirstJsonObject, tryExtractFirstJsonObject } from './util/llm_json.js';
 export { log } from './util/log.js';
 export type { Log } from './util/log.js';
+export { formatStateBlock } from './util/state_block.js';
+export type { StateBlockOptions } from './util/state_block.js';
+
+// Observability — tracer interface + Langfuse impl (optional; NoOp default)
+export { NoOpTracer, LangfuseTracer } from './observability/tracer.js';
+export type { Tracer, TraceEvent, LangfuseTracerOptions } from './observability/tracer.js';
 
 // Media stores
 export { R2MediaStore } from './media/r2_media_store.js';

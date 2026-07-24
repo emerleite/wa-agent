@@ -2,6 +2,26 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.13.0] — 2026-07-24
+
+### Added
+
+- **`requireAdminAuth`** + **`timingSafeStringEqual`** (`src/security/admin_auth.ts`) — dual Bearer / Basic guard for `/admin/*` endpoints. Scripts and CI hit routes with `Authorization: Bearer <api-key>`; browsers hit the same routes and get the native login prompt via HTTP Basic. Both paths compare in constant time. Returns `null` on OK, a 401 `Response` with `WWW-Authenticate: Basic realm="…"` on fail. All three credentials are optional — if none configured, every request is denied (safer than open-by-misconfig).
+- **Crypto primitives** (`src/security/crypto.ts`) — `generateOtpCode(length = 6)`, `generateRandomToken(bytes = 32)`, `sha256Hex`, `hashOtpCode(code, salt)` (per-owner salted), `hashSessionToken(token)`. All Web Crypto based (works in the Workers runtime). Designed for portal / login flows: OTP verification, session token issuance with hash-in-DB / plain-in-cookie.
+- **Cookie helpers** (`src/security/cookie.ts`) — `serializeCookie(name, value, opts)` with tuned defaults (Path=/, Secure, HttpOnly, SameSite=Lax), `clearCookie`, `parseCookieHeader`, `getCookie(req, name)`. Zero-dep — just RFC 6265 with the modern attributes we actually use.
+- **`Tracer` interface** + **`NoOpTracer`** + **`LangfuseTracer`** (`src/observability/tracer.ts`) — pragmatic HTTP wrapper over Langfuse's ingestion API. One `flushTrace(event)` call per operation of interest. Consumers `ctx.waitUntil(tracer.flushTrace(...))` for zero user-visible latency. `NoOpTracer` is the default so wiring a `tracer?: Tracer` argument anywhere stays free when the env vars aren't set. Deliberate choice over full OpenTelemetry SDK — configuration overhead not worth it for the "log one trace per agent turn" use case.
+- **`formatStateBlock`** (`src/util/state_block.ts`) — form-fill helper. Renders a "current state" block for injection into an LLM system prompt so the model doesn't re-ask fields already collected. Skips null / undefined / '' / [] values by default; configurable `labels`, `formatValue`, and `skip` predicate. Returns `""` when nothing renders so callers can safely template it in unconditionally.
+- **`docs/AGENT_TOOL_VALIDATION.md`** — recipe for tool error handling: schema failures → framework returns Zod error as tool-result string (auto-recover); semantic failures → return actionable string; infrastructure failures → throw. The single most impactful pattern for a well-behaved agent.
+- **`docs/SCOPED_AGENT_PROMPT.md`** — template + rationale for Meta AI policy (Jan/2026) scope restriction. Numbered SCOPE list, "never engage with general questions" clause, format constraints, ask-before-you-act clauses. Explicitly enumerates what NOT to include (persona bloat, prompt-injection defenses in the prompt, per-tool examples).
+
+### Tests
+
+- 1000 → **1057 tests passing** across 84 files (57 new). `admin_auth` (15), `crypto` (12), `cookie` (14), `tracer` (5), `state_block` (9), `admin_auth` extras (2).
+
+### Notes
+
+Additive release. No API changes; existing consumers upgrade to pick up the new symbols. All new modules are opt-in — the framework doesn't wire them into `Agent` or `AgentLoop` this release. `LangfuseTracer` is a normal class with `fetch` injectable — no new peerDep added; the Langfuse SDK is deliberately NOT a dependency (the ingestion API is stable and one POST is simpler than importing a client that expects OTel plumbing).
+
 ## [0.12.0] — 2026-07-24
 
 ### Added

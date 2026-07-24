@@ -1,6 +1,6 @@
 {
 	"name": "wa-agent",
-	"version": "0.12.0",
+	"version": "0.13.0",
 	"description": "Opinionated WhatsApp Cloud API agent framework for Cloudflare Workers — Drizzle-backed stores, D1-coalesced webhook queue, AI assistant integration with pluggable reply enrichment, opt-in CRM, account-link redemption, broadcast cron, sequential drip plans, rate-capped opportunistic side-channel sends, Zod-validated event stream + Analytics Engine sink, and a composable intent → policy → LLM → audit pipeline.",
 	"type": "module",
 	"main": "dist/index.js",
