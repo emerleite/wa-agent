@@ -2,6 +2,24 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.12.0] — 2026-07-24
+
+### Added
+
+- **`normalizeBrazilianPhone`, `localizeBrazilianPhone`, `formatBrazilianPhone`, `digits`** (`src/util/phone_br.ts`) — canonical BR phone helpers. WhatsApp/Meta occasionally omits the "9" that BR mobiles require (same user arriving as `5548996967308` on one turn and `554896967308` on the next); without normalization you get duplicate leads and broken lookups. The rule: 55 + DDD(2) + 9 + local(8) = 13 digits; if a 12-digit input has a local prefix starting with 6/7/8/9 it's a mobile missing its "9" and gets one injected. Also accepts messy inputs (with formatting, with or without country code); unknown shapes pass through as digits so consumers don't lose data. Extracted from two independent implementations in sibling projects (zap-prime, aysu) that both reinvented the same wheel.
+- **`formatForWhatsapp`** (`src/util/whatsapp_format.ts`) — Markdown → WhatsApp dialect converter. Rewrites `**bold**` → `*bold*`, `# Header` → `*Header*`, `- item` → `• item`, `[text](url)` → `text (url)`, collapses 3+ newlines to 2. Complements the existing `stripMarkdown` (which strips everything for log destinations): use this one on strings heading to `reply.text(...)` so answers render correctly in-app instead of showing literal `**`.
+- **`extractFirstJsonObject<T>`, `tryExtractFirstJsonObject<T>`** (`src/util/llm_json.ts`) — robust JSON extraction from arbitrary LLM output. Strips ```` ```json ```` fences, isolates the first balanced `{...}` block (respecting string escapes), then `JSON.parse`s. `tryExtract*` returns `null` on any failure — useful inside `AgentTool.execute` where the parse error should become the tool-result string so the model re-asks the user.
+- **`R2MediaStore`** (`src/media/r2_media_store.ts`) — user-generated media store. Distinct from `R2Cache` (which caches framework-generated TTS output): this one keys inbound media by `(scope, id)` so each conversation's uploads are isolated and easy to enumerate. Optional `fileSuffix` for CDN sniffing, optional `publicHost` (falls back to bare key when empty), key sanitization to prevent path traversal.
+- **`log`** (`src/util/log.ts`) — structured `[PREFIX] scope: message` logger. Prefixes: `[START]`, `[SUCCESS]`, `[FAIL]`, `[FINISH]`, `[INFO]`. Grep-friendly for `wrangler tail`. `log.fail(scope, msg, err?)` also pipes the error to `console.error` so stacks land in the dashboard with source maps. Convention documented so consumers get a coherent log corpus across their bot + framework internals.
+
+### Tests
+
+- 955 → **1000 tests passing** across 79 files (45 new). All extractions arrived with unit tests: `phone_br` (17), `whatsapp_format` (7), `llm_json` (11), `r2_media_store` (7), `log` (5).
+
+### Notes
+
+Additive release. No API changes; consumers on 0.11.x upgrade to pick up the new symbols. All new modules are opt-in — nothing else in the framework depends on them.
+
 ## [0.11.2] — 2026-07-24
 
 ### Added

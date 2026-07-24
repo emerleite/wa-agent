@@ -333,6 +333,7 @@ export type { Emit, EventsBindings, EmitOptions, FrameworkEvent, FrameworkEventT
 
 // Utils
 export { whatsappBold, stripMarkdown, chunkText, INTERACTIVE_BODY_MAX, TEXT_BODY_MAX } from './util/text.js';
+export { formatForWhatsapp } from './util/whatsapp_format.js';
 export { QuietHours } from './util/quiet_hours.js';
 export type { QuietHoursOptions } from './util/quiet_hours.js';
 export { withUtm, createUtmTagger } from './util/utm.js';
@@ -343,6 +344,14 @@ export { normalizeIdentifier } from './util/normalize_identifier.js';
 export type { NormalizeIdentifierOptions } from './util/normalize_identifier.js';
 export { computeHoldout } from './util/holdout.js';
 export type { ComputeHoldoutArgs } from './util/holdout.js';
+export { digits, normalizeBrazilianPhone, localizeBrazilianPhone, formatBrazilianPhone } from './util/phone_br.js';
+export { extractFirstJsonObject, tryExtractFirstJsonObject } from './util/llm_json.js';
+export { log } from './util/log.js';
+export type { Log } from './util/log.js';
+
+// Media stores
+export { R2MediaStore } from './media/r2_media_store.js';
+export type { R2MediaStoreOptions, UploadArgs as R2MediaUploadArgs, UploadResult as R2MediaUploadResult } from './media/r2_media_store.js';
 
 // Shared types
 export type {
