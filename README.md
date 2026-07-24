@@ -814,17 +814,36 @@ export default {
 
 ## Recipe docs
 
-Per-primitive deep-dives — decision trees, setup, schema flexibility, anti-patterns:
+Full doc index in [`docs/README.md`](./docs/README.md) — categorized by task, version, and persona. Highlights:
 
+**Architecture + onboarding**
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — layering, module inventory, request/cron flow, extension points, load-bearing design decisions.
+- [`docs/SCAFFOLD_CLI.md`](./docs/SCAFFOLD_CLI.md) — `wa-agent init` templates, rewriting rules, adding a custom template.
+- [`docs/CONTRIBUTING.md`](./docs/CONTRIBUTING.md) — dev-loop for framework hackers, release checklist.
+
+**Composed flows**
+- [`docs/AGENT_LOOP.md`](./docs/AGENT_LOOP.md) — `AgentLoop` + `ToolRegistry` + `ConversationMemory` (v0.11) — multi-step tool-calling on top of a pluggable `AgentLLM` adapter. Ships with a Vercel AI SDK adapter at `wa-agent/ai-sdk`.
+- [`docs/AI_ROUTER.md`](./docs/AI_ROUTER.md) — `AIRouter` + `CircuitBreaker` + `AICallLedger` (v0.9) — multi-provider single-shot dispatch with per-call observability.
 - [`docs/MULTI_TENANT.md`](./docs/MULTI_TENANT.md) — `MultiTenantAgentRegistry` routing, signature verify, single → multi migration.
 - [`docs/MULTI_TENANT_CRON.md`](./docs/MULTI_TENANT_CRON.md) — `drainAll` / `forEachTenant` / `dispatchApprovedReviews` cron patterns.
-- [`docs/ESCALATION.md`](./docs/ESCALATION.md) — `EscalationStore` + notifiers (Slack / HTTP / custom), app-owned schemas.
+
+**Agent behavior**
+- [`docs/SCOPED_AGENT_PROMPT.md`](./docs/SCOPED_AGENT_PROMPT.md) — template + rationale for Meta AI policy (Jan/2026) scope enforcement.
+- [`docs/AGENT_TOOL_VALIDATION.md`](./docs/AGENT_TOOL_VALIDATION.md) — schema-fail vs semantic-fail vs infra-fail decision table for tools.
+- [`docs/STATE_BLOCK.md`](./docs/STATE_BLOCK.md) — `formatStateBlock` + form-fill agent recipe.
+
+**Infrastructure**
+- [`docs/SECURITY.md`](./docs/SECURITY.md) — `requireAdminAuth` + OTP + session cookies + threat model (v0.13).
+- [`docs/TRACING.md`](./docs/TRACING.md) — `Tracer` interface + `LangfuseTracer` + AgentLoop wiring recipe (v0.13).
+- [`docs/UTILITIES.md`](./docs/UTILITIES.md) — `phone_br`, `whatsapp_format`, `llm_json`, `R2MediaStore`, `log` (v0.12).
+- [`docs/META_SETUP.md`](./docs/META_SETUP.md) — operational guide for the Meta side: tokens, webhooks, templates, opt-in, policy.
+
+**Operations**
 - [`docs/CONSENT.md`](./docs/CONSENT.md) — `ConsentStore` + `consentGate` pipeline integration, re-grant flows.
+- [`docs/ESCALATION.md`](./docs/ESCALATION.md) — `EscalationStore` + notifiers (Slack / HTTP / custom), app-owned schemas.
 - [`docs/REVIEW_QUEUE.md`](./docs/REVIEW_QUEUE.md) — `AgentReviewQueue` (v0.8) — gates assisted-mode sends on human approval.
-- [`docs/AI_ROUTER.md`](./docs/AI_ROUTER.md) — `AIRouter` + `CircuitBreaker` + `AICallLedger` (v0.9) — multi-provider single-shot dispatch with per-call observability.
-- [`docs/AGENT_LOOP.md`](./docs/AGENT_LOOP.md) — `AgentLoop` + `ToolRegistry` + `ConversationMemory` (v0.11) — multi-step tool-calling on top of a pluggable `AgentLLM` adapter. Ships with a Vercel AI SDK adapter at `wa-agent/ai-sdk`.
-- [`docs/META_SETUP.md`](./docs/META_SETUP.md) — operational guide for the Meta side: tokens, webhooks, templates, opt-in, policy. References the helper scripts.
 - [`docs/TESTING.md`](./docs/TESTING.md) — three-layer testing pattern (unit/integration/mutation), `withIsolatedD1`, HMAC helper, mock-meta-server workflow, CI matrix.
+- [`bash.md`](./bash.md) — dev cookbook: D1 CLI, mock Meta, HMAC curl, Meta ops, tail-log grep, release checklist.
 
 ## Tooling
 
@@ -1032,6 +1051,43 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 ## Status
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
+
+### v0.13.0 — minor release (security primitives, tracer, agent polish):
+
+- **`requireAdminAuth`** + **`timingSafeStringEqual`** (`src/security/admin_auth.ts`) — dual Bearer / Basic guard for `/admin/*` endpoints. Constant-time compare. 401 emits `WWW-Authenticate` so browsers pop the native login prompt.
+- **Crypto primitives** (`src/security/crypto.ts`) — `generateOtpCode`, `generateRandomToken`, `sha256Hex`, `hashOtpCode` (per-owner salted), `hashSessionToken`. Web Crypto based; works in the Workers runtime.
+- **Cookie helpers** (`src/security/cookie.ts`) — `serializeCookie` (defaults: `Path=/; Secure; HttpOnly; SameSite=Lax`), `clearCookie`, `parseCookieHeader`, `getCookie`. RFC 6265, zero deps.
+- **`Tracer` + `NoOpTracer` + `LangfuseTracer`** (`src/observability/tracer.ts`) — pragmatic HTTP wrapper over Langfuse's ingestion API. Fire-and-forget under `ctx.waitUntil`; no `@langfuse/*` peerDep.
+- **`formatStateBlock`** (`src/util/state_block.ts`) — form-fill agent helper. Injects a "current draft" block into the LLM system prompt so the model doesn't re-ask collected fields.
+- **`docs/SECURITY.md`, `docs/TRACING.md`, `docs/STATE_BLOCK.md`, `docs/AGENT_TOOL_VALIDATION.md`, `docs/SCOPED_AGENT_PROMPT.md`** — decision trees + recipes for each new primitive.
+
+1057 tests passing, additive-only, no breaking changes.
+
+### v0.12.0 — minor release (cross-project extractions):
+
+- **`normalizeBrazilianPhone` + `formatBrazilianPhone`** (`src/util/phone_br.ts`) — BR phone canonicalization (fixes the WhatsApp "9" bug). Extracted from two independent sibling projects.
+- **`formatForWhatsapp`** (`src/util/whatsapp_format.ts`) — Markdown → WhatsApp dialect converter (`**bold**` → `*bold*`, `- item` → `• item`, `[t](u)` → `t (u)`).
+- **`extractFirstJsonObject<T>` + `tryExtractFirstJsonObject<T>`** (`src/util/llm_json.ts`) — robust JSON extraction from LLM output (strips ```` ```json ```` fences, isolates first balanced `{…}`).
+- **`R2MediaStore`** (`src/media/r2_media_store.ts`) — user-uploaded media store keyed by `(scope, id)`. Distinct from `R2Cache` (framework TTS).
+- **`log`** (`src/util/log.ts`) — structured `[START] / [SUCCESS] / [FAIL] / [FINISH] / [INFO]` console logger; grep-friendly for `wrangler tail`.
+- **`docs/UTILITIES.md`** — recipes + anti-patterns for every utility.
+
+1000 tests passing (45 new); additive.
+
+### v0.11.2 — patch release (scaffold CLI):
+
+- **`npx wa-agent init [dir] [--template=<name>]`** (`bin/wa-agent.js`) — zero-dep Node scaffold that copies from `examples/<template>/` and rewrites paths + template name + wa-agent dep version so the scaffolded project stands alone. Templates: `echo-bot` (default), `tool-agent`, `support-bot`, `multi-tenant-bot`, `full-bot`.
+- **`examples/` published in the npm tarball** — CLI copies from `node_modules/wa-agent/examples/`. Adds ~40 KB for a large DX win.
+- **`README.md` Quickstart** — one-command onboarding via the CLI.
+- **`docs/SCAFFOLD_CLI.md`** — templates, rewriting rules, adding a custom template.
+
+### v0.11.1 — patch release (DX quick-wins, no runtime changes):
+
+- **`.editorconfig` + `.prettierrc` + `.prettierignore`** — tabs, LF, single quotes, 140-char, trailing commas.
+- **`bash.md`** — dev cookbook: D1 execute/migrate, mock Meta, HMAC curl for local webhook simulation, Meta ops scripts, hardcoded linter, `wrangler tail` grep, framework dev-loop, release checklist.
+- **`tools/README.md`** — documents `mock-meta-server.ts` (simulated endpoints, introspection endpoints, what it does NOT do).
+- **Every `examples/*` gained `package.json` + `.dev.vars.example`** with runnable `dev` / `deploy` / `db:create` / `db:migrate` / `mock:meta` scripts. `wa-agent` wired as `file:../..` inside the monorepo.
+- **`examples/echo-bot/README.md`** rewritten with a "Quickstart (local, no real Meta account)" section + a `curl` recipe that computes a valid `X-Hub-Signature-256` signature (framework has no dev bypass — the recipe is the correct way).
 
 ### v0.11.0 — minor release (AgentLoop — multi-step tool calling):
 

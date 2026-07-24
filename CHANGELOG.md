@@ -13,6 +13,15 @@ All notable changes to `wa-agent` are documented here. This project follows [Kee
 - **`formatStateBlock`** (`src/util/state_block.ts`) — form-fill helper. Renders a "current state" block for injection into an LLM system prompt so the model doesn't re-ask fields already collected. Skips null / undefined / '' / [] values by default; configurable `labels`, `formatValue`, and `skip` predicate. Returns `""` when nothing renders so callers can safely template it in unconditionally.
 - **`docs/AGENT_TOOL_VALIDATION.md`** — recipe for tool error handling: schema failures → framework returns Zod error as tool-result string (auto-recover); semantic failures → return actionable string; infrastructure failures → throw. The single most impactful pattern for a well-behaved agent.
 - **`docs/SCOPED_AGENT_PROMPT.md`** — template + rationale for Meta AI policy (Jan/2026) scope restriction. Numbered SCOPE list, "never engage with general questions" clause, format constraints, ask-before-you-act clauses. Explicitly enumerates what NOT to include (persona bloat, prompt-injection defenses in the prompt, per-tool examples).
+- **`docs/ARCHITECTURE.md`** — full layering diagram, module inventory table (every top-level `src/` dir + its migrations), request path (webhook → coalesce → dispatch → reply → audit), cron path, extension points, and 10 load-bearing design decisions distilled from v0.1 → v0.13.
+- **`docs/SECURITY.md`** — every security primitive in one place: `requireAdminAuth`, `verifyMetaSignature`, `Blocklist`, `RateLimit`, OTP + session crypto, cookie helpers, `timingSafeStringEqual`. Threat model (in-scope vs out-of-scope) + anti-patterns.
+- **`docs/TRACING.md`** — `Tracer` interface, `LangfuseTracer` setup, `AgentLoop` wiring recipe under `ctx.waitUntil`, sampling patterns, cron + `AIRouter` recipes, custom backend authoring (OTel bridge example), anti-patterns.
+- **`docs/STATE_BLOCK.md`** — form-fill agent pattern: draft persistence, `formatStateBlock` injection into the system prompt, "set-one-field" + commit tool shape, custom `labels` / `formatValue` / `skip`, anti-patterns.
+- **`docs/UTILITIES.md`** — one-stop reference for the v0.12 primitives: `phone_br`, `whatsapp_format`, `llm_json`, `R2MediaStore`, `log`. When to use each, recipes, anti-patterns.
+- **`docs/SCAFFOLD_CLI.md`** — `wa-agent init` (v0.11.2) reference: templates, per-file rewriting rules, custom template authoring.
+- **`docs/CONTRIBUTING.md`** — dev-loop for framework hackers: test layers, mutation testing, hardcoded linter, AI SDK adapter maintenance, scaffold CLI hacking, migration authoring, docs conventions, release checklist.
+- **`docs/README.md`** — categorized doc index (Getting started / Guide / Recipes / Reference / Ops), by-version table, by-persona table.
+- **`README.md`** — refreshed "Recipe docs" section with the full doc index; added v0.11.1 through v0.13.0 entries to the "Status" section so version history is discoverable without leaving the README.
 
 ### Tests
 
@@ -21,6 +30,8 @@ All notable changes to `wa-agent` are documented here. This project follows [Kee
 ### Notes
 
 Additive release. No API changes; existing consumers upgrade to pick up the new symbols. All new modules are opt-in — the framework doesn't wire them into `Agent` or `AgentLoop` this release. `LangfuseTracer` is a normal class with `fetch` injectable — no new peerDep added; the Langfuse SDK is deliberately NOT a dependency (the ingestion API is stable and one POST is simpler than importing a client that expects OTel plumbing).
+
+The doc set is intentionally comprehensive: every load-bearing primitive from v0.11–v0.13 now has a dedicated doc, and `docs/README.md` indexes them by task, version, and persona.
 
 ## [0.12.0] — 2026-07-24
 
