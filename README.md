@@ -84,7 +84,38 @@ Cron jobs run alongside webhook traffic:
               SlotDelivery.pickForUser() → send + recordImpression
 ```
 
-## Install
+## Quickstart
+
+Scaffold a runnable bot in one command:
+
+```bash
+npx wa-agent init my-bot
+cd my-bot
+npm install
+cp .dev.vars.example .dev.vars   # then fill in Meta secrets
+npm run db:create                 # → paste the printed database_id into wrangler.toml
+npm run db:migrate                # framework migrations, local D1
+npm run dev                       # wrangler dev on http://localhost:8787
+```
+
+For local development without a real Meta account, boot the fake Meta server in a second terminal and point the Worker at it:
+
+```bash
+npm run mock:meta                 # fake graph.facebook.com on :4000
+echo 'META_GRAPH_BASE_URL=http://localhost:4000' >> .dev.vars
+```
+
+Templates:
+
+```bash
+npx wa-agent init my-bot                             # echo-bot (default)
+npx wa-agent init my-tools --template=tool-agent     # AgentLoop + Zod tools
+npx wa-agent init my-support --template=support-bot  # pipeline (intent → policy → LLM)
+npx wa-agent init my-bsp --template=multi-tenant-bot # BSP-style, many numbers
+npx wa-agent init my-all --template=full-bot         # every primitive (reference)
+```
+
+## Install (manual)
 
 ```bash
 npm install wa-agent hono openai

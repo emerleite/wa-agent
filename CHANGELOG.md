@@ -2,6 +2,18 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.11.2] — 2026-07-24
+
+### Added
+
+- **`wa-agent` CLI** (`bin/wa-agent.js`) — zero-dep Node script exposed as the `wa-agent` bin. One subcommand today, `init [dir] [--template=<name>]`, that scaffolds a runnable project from the `examples/<template>/` tree. Templates: `echo-bot` (default), `tool-agent`, `support-bot`, `multi-tenant-bot`, `full-bot`. Rewrites `package.json` (name → dir basename, `wa-agent` `file:../..` → published version, script paths → `node_modules/wa-agent/...`), `wrangler.toml` (worker + D1 names → dir basename), README/env template (repo-relative paths → npm-package-relative). Adds a default `.gitignore`. Prints a numbered next-steps checklist.
+- **`examples/` published in the npm tarball** — the CLI copies from `node_modules/wa-agent/examples/<template>/`, so the directory now ships in the package. Adds ~40 KB to the tarball for a big DX win.
+- **`README.md` — new "Quickstart" section** — one-command onboarding (`npx wa-agent init my-bot`), template list, and a mock-Meta local-dev hint. The prior "Install" is kept as "Install (manual)" for the composable path.
+
+### Notes
+
+Additive release. No API changes; consumers on 0.11.x get the CLI just by upgrading. The scaffold uses Node built-ins only (fs, path, readline) — no runtime dep added to wa-agent.
+
 ## [0.11.1] — 2026-07-24
 
 ### Added
