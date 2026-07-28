@@ -822,8 +822,11 @@ Full doc index in [`docs/README.md`](./docs/README.md) — categorized by task, 
 - [`docs/CONTRIBUTING.md`](./docs/CONTRIBUTING.md) — dev-loop for framework hackers, release checklist.
 
 **Composed flows**
-- [`docs/AGENT_LOOP.md`](./docs/AGENT_LOOP.md) — `AgentLoop` + `ToolRegistry` + `ConversationMemory` (v0.11) — multi-step tool-calling on top of a pluggable `AgentLLM` adapter. Ships with a Vercel AI SDK adapter at `wa-agent/ai-sdk`.
-- [`docs/AI_ROUTER.md`](./docs/AI_ROUTER.md) — `AIRouter` + `CircuitBreaker` + `AICallLedger` (v0.9) — multi-provider single-shot dispatch with per-call observability.
+- [`docs/AGENT_LOOP.md`](./docs/AGENT_LOOP.md) — `AgentLoop` + `ToolRegistry` + `ConversationMemory` (v0.11) — multi-step tool-calling on top of a pluggable `AgentLLM` adapter. Ships with a Vercel AI SDK adapter at `@emerleite/wa-agent/ai-sdk`.
+- [`docs/AI_ROUTER.md`](./docs/AI_ROUTER.md) — `AIRouter` + `CircuitBreaker` + `AICallLedger` (v0.9+) — multi-provider single-shot dispatch with per-call observability. Azure vision + `extraLogFields` hook in v0.15/v0.16.
+- [`docs/LLM_CLASSIFIER.md`](./docs/LLM_CLASSIFIER.md) — `LLMClassifier<C>` (v0.15) — classify → parse → fail-closed on top of `AIRouter`.
+- [`docs/QUEUE.md`](./docs/QUEUE.md) — `D1CoalesceQueue` (v0.1+) with per-user webhook dispatch (v0.14 `processBatchForUser` / parallel `processAll`).
+- [`docs/MEDIA.md`](./docs/MEDIA.md) — `R2Cache` (v0.4) + `R2MediaStore` (v0.12) + `ingestMedia` + `MediaStorage` (v0.15) — the media story end-to-end.
 - [`docs/MULTI_TENANT.md`](./docs/MULTI_TENANT.md) — `MultiTenantAgentRegistry` routing, signature verify, single → multi migration.
 - [`docs/MULTI_TENANT_CRON.md`](./docs/MULTI_TENANT_CRON.md) — `drainAll` / `forEachTenant` / `dispatchApprovedReviews` cron patterns.
 
@@ -833,10 +836,10 @@ Full doc index in [`docs/README.md`](./docs/README.md) — categorized by task, 
 - [`docs/STATE_BLOCK.md`](./docs/STATE_BLOCK.md) — `formatStateBlock` + form-fill agent recipe.
 
 **Infrastructure**
-- [`docs/SECURITY.md`](./docs/SECURITY.md) — `requireAdminAuth` + OTP + session cookies + threat model (v0.13).
+- [`docs/SECURITY.md`](./docs/SECURITY.md) — `requireAdminAuth` + OTP + `sendAuthenticationTemplate` + session cookies + threat model (v0.13 / v0.16).
 - [`docs/TRACING.md`](./docs/TRACING.md) — `Tracer` interface + `LangfuseTracer` + AgentLoop wiring recipe (v0.13).
-- [`docs/UTILITIES.md`](./docs/UTILITIES.md) — `phone_br`, `whatsapp_format`, `llm_json`, `R2MediaStore`, `log` (v0.12).
-- [`docs/META_SETUP.md`](./docs/META_SETUP.md) — operational guide for the Meta side: tokens, webhooks, templates, opt-in, policy.
+- [`docs/UTILITIES.md`](./docs/UTILITIES.md) — one-stop for the small primitives across v0.12–v0.16: `phone_br` + `phoneLookupCandidates`, `whatsapp_format`, `llm_json`, `log`, `Streak` (day-math), `resolveReplyContext`, `classifyDbError`, `landingHtml`, PT-BR intent triggers, `PROVIDER_LIMITS` / cost estimator.
+- [`docs/META_SETUP.md`](./docs/META_SETUP.md) — operational guide for the Meta side: tokens, webhooks, templates, opt-in, policy. Includes `extractStatuses` + `pricingCategory` alarm (v0.15).
 
 **Operations**
 - [`docs/CONSENT.md`](./docs/CONSENT.md) — `ConsentStore` + `consentGate` pipeline integration, re-grant flows.
@@ -1051,6 +1054,37 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 ## Status
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
+
+### v0.16.0 — minor release (OTP template, OG landing, safety-footer factory, AIRouter extra-log hook):
+
+- **`WhatsAppClient.sendAuthenticationTemplate(to, code, {name, language?, buttonIndex?})`** — Meta AUTHENTICATION-category OTP flow. Encodes the non-obvious rule that the code MUST appear in body AND URL button parameters. Pairs with v0.13's `generateOtpCode` / `hashOtpCode` for a complete portal-OTP flow. See [`docs/SECURITY.md`](./docs/SECURITY.md#authentication-template).
+- **`landingHtml` + `landingResponse`** (`src/util/og_landing.ts`) — minimal OpenGraph-enriched HTML for the `/` of a Worker. Makes WhatsApp URL-button previews render as cards instead of bare `*.workers.dev`. All user fields HTML-escaped. See [`docs/UTILITIES.md`](./docs/UTILITIES.md#landinghtml--landingresponse).
+- **`makeSafetyFooterEnricher({triggers, footer, alreadyMentioned?})`** (`src/ai/safety_footer.ts`) — generic factory for post-hoc safety-footer injection (deterministic where LLM was unreliable). No PT-BR / CVV assumptions in the framework version.
+- **`AIRouter.route({extraLogFields})`** — optional callback that fires on success and returns extra columns to inline into the ledger row. Right for classifier category / intent tag without a follow-up UPDATE. See [`docs/AI_ROUTER.md`](./docs/AI_ROUTER.md#extralogfields-hook).
+
+1141 tests passing, additive-only, no breaking changes.
+
+### v0.15.0 — minor release (LLMClassifier, reply-context, media pipeline, status extractor, DB error taxonomy, Azure vision):
+
+- **`LLMClassifier<C>`** (`src/ai/llm_classifier.ts`) — thin wrapper over `AIRouter` for the classify → parse → fail-closed pattern that bibliafala and aysu both hand-rolled. Codifies system prompt + user template + parser + fallback in ~10 lines instead of ~80. See [`docs/LLM_CLASSIFIER.md`](./docs/LLM_CLASSIFIER.md).
+- **`resolveReplyContext<T>({inReplyToWamid, whatsapp, byReplyWamid, byRecency, withinMinutes})`** (`src/util/reply_context.ts`) — resolve an inbound message to a bot-owned entity via reply pointer OR recency-window fallback. Generalizes "edit the last X" flows.
+- **`ingestMedia({client, mediaId, store, scope, id})` + `MediaStorage`** interface (`src/media/media_pipeline.ts`) — one-call Meta media download + `MediaStorage.upload`. `R2MediaStore` already matches the interface. See [`docs/MEDIA.md`](./docs/MEDIA.md).
+- **`WhatsAppClient.downloadMediaWithMeta(mediaId)`** — variant that returns `{stream, mimeType, sha256, fileSize}` so pipelines get real `contentType`.
+- **`extractStatuses(envelope)` + `StatusUpdate` type** (`src/webhook/extract.ts`) — normalize Meta's `statuses[]` array with `pricingCategory` (UTILITY→MARKETING reclassification alarm). See [`docs/META_SETUP.md`](./docs/META_SETUP.md#status-updates--pricing-category).
+- **`classifyDbError(e)` + `logDbError(scope, method, e)`** (`src/util/db_error.ts`) — D1 error taxonomy (`schema` / `transient` / `unknown`).
+- **Vision + Azure param on `OpenAICompatProvider`** — new `maxTokensField` (`'max_tokens' | 'max_completion_tokens'`), `omitTemperature`, and optional `images` in `ProviderRunArgs`. See [`docs/AI_ROUTER.md`](./docs/AI_ROUTER.md#azure-reasoning--vision-models).
+
+1121 tests passing, additive-only, no breaking changes.
+
+### v0.14.0 — minor release (queue fan-out, phone lookups, streak, PT-BR intents, provider limits):
+
+- **`D1CoalesceQueue.processBatchForUser(whatsapp, handler)` + `listPendingUsers()` + `processAll(handler, {parallel})`** — webhook path can now dispatch per-user without waiting behind slow free-tier users. See [`docs/QUEUE.md`](./docs/QUEUE.md).
+- **`phoneLookupCandidates(input)`** (`src/util/phone_br.ts`) — read-side sibling of `normalizeBrazilianPhone`. Yields all plausible variants (±DDI, ±"9") for looking up rows in mixed formats.
+- **`brtToday` / `dayDelta` / `nextStreak`** (`src/util/streak.ts`) — pure day-math for cross-device activity streaks in BRT (UTC-3, no DST).
+- **`PT_BR_INTENT_TRIGGERS` + `matchPtBrIntent`** (`src/ai/pt_br_intents.ts`) — regex pack for the intent buckets Brazilian WhatsApp bots consistently reinvent (help/thanks/praise/complaint/cancel).
+- **`PROVIDER_LIMITS` + `estimateCostUsd` + `estimateCostMicroUsd`** (`src/ai/provider_limits.ts`) — curated registry of LLM provider free-tier caps + per-token pricing (Groq / Cerebras / OpenRouter / DeepInfra / Maritaca / Azure / Workers AI).
+
+1093 tests passing, additive-only, no breaking changes.
 
 ### v0.13.0 — minor release (security primitives, tracer, agent polish):
 

@@ -226,8 +226,59 @@ Transactional notifications (lead alert, password reset, order update) belong in
 
 Mitigations:
 - **100% transactional language** — no promo CTA, no offers, no "get", "win", "discount"
-- **Monitor `pricing.category` in `messages.statuses` webhook** — when a message goes out as `marketing`, log it and alert
+- **Monitor `pricing.category` in `messages.statuses` webhook** — when a message goes out as `marketing`, log it and alert. See [Status updates + pricing.category](#status-updates--pricing-category) below.
 - If reclassification becomes common: ship a `_v2` cleaner version and migrate
+
+### Status updates + `pricing.category`
+
+Meta webhooks carry either MESSAGES (inbound) or STATUSES (delivery updates for your outbound sends). The two shapes look similar; `extractInbound` (v0.1) handles the message path and — since v0.15 — `extractStatuses` normalizes the status path.
+
+```ts
+import { extractStatuses, type StatusUpdate } from '@emerleite/wa-agent';
+
+app.post('/wa/webhook', async (c) => {
+  const envelope = await c.req.json();
+  const statuses = extractStatuses(envelope);
+  for (const s of statuses) {
+    // s: { wamid, status, pricingCategory, timestampMs, recipient?, errors? }
+    if (s.pricingCategory === 'marketing') {
+      // ALERT — Meta reclassified our template to MARKETING (5-7× more expensive).
+      await alertOnCall({ wamid: s.wamid, template: await lookupTemplate(s.wamid) });
+    }
+    if (s.status === 'failed') {
+      // Meta rejected the send. `s.errors` has the diagnostic code.
+      console.warn('[wa.status] failed', s.errors);
+    }
+  }
+  // …handle inbound messages via extractInbound(envelope) too
+  return c.text('OK');
+});
+```
+
+The `StatusUpdate` shape normalizes Meta's raw statuses[]:
+
+```ts
+interface StatusUpdate {
+  wamid: string;
+  status: 'sent' | 'delivered' | 'read' | 'failed';
+  pricingCategory?: 'utility' | 'marketing' | 'authentication' | 'service';
+  timestampMs: number;
+  recipient?: string;
+  errors?: unknown[];
+}
+```
+
+**Alarm surface**: watch for `pricingCategory === 'marketing'` on templates you registered as UTILITY. That's Meta silently reclassifying — your BRL/message just jumped 5-7×. Persist a counter per template + alert when it spikes; consider migrating to a `_v2` version.
+
+### Creating an AUTHENTICATION template
+
+For OTP flows (portal login via WhatsApp code), register the template with:
+
+- Category: **AUTHENTICATION** (NOT UTILITY — UTILITY templates carrying OTP codes are rejected)
+- Body with a `{{1}}` placeholder for the code (Meta writes the surrounding sentence for the target language)
+- URL button, sub_type `COPY_CODE`, with a placeholder for the code
+
+Then send via `WhatsAppClient.sendAuthenticationTemplate(to, code, {name, language, buttonIndex})` (v0.16) — the framework encodes Meta's rule that the code MUST appear in BOTH the body and the URL button parameter. See [`SECURITY.md#authentication-template`](./SECURITY.md#authentication-template) for the full flow.
 
 ### `wa.me` direct in buttons is FORBIDDEN
 

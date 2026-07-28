@@ -193,6 +193,88 @@ providers: {
 
 Tune for the typical user latency budget — for a chat reply that the user is actively waiting for, ≤9s is reasonable; for background batch jobs, much higher.
 
+## Azure reasoning + vision models
+
+`OpenAICompatProvider` is the generic Chat Completions client. Since v0.15, three options handle the params that classic Chat Completions doesn't cover: reasoning-family models (`gpt-5.4-*`, `o1-*`) that require `max_completion_tokens` instead of `max_tokens`, models that reject any non-default `temperature`, and vision-capable models that accept image content.
+
+### Azure reasoning models — `maxTokensField` + `omitTemperature`
+
+Azure OpenAI reasoning-family deployments require `max_completion_tokens` in the request body. Passing the classic `max_tokens` field returns an error. They also reject `temperature ≠ 1`. Set both options once per provider:
+
+```ts
+new OpenAICompatProvider({
+  name: 'azure_reasoning',
+  url: 'https://your-resource.openai.azure.com/openai/deployments/gpt-5.4-nano/chat/completions?api-version=2024-12-01-preview',
+  apiKey: env.AZURE_OPENAI_API_KEY,
+  model: 'gpt-5.4-nano',
+  maxTokensField: 'max_completion_tokens',  // Azure reasoning requirement
+  omitTemperature: true,                     // reasoning models reject non-default temperature
+});
+```
+
+Default is `maxTokensField: 'max_tokens'` and `omitTemperature: false` — classic behavior. Set these only when Azure's model requires it.
+
+### `images` — vision input
+
+Vision-capable models accept image content alongside text. `ProviderRunArgs` has an optional `images` field; when present, the provider rewrites the user message as a multi-part `[{type:'text',text},{type:'image_url',image_url:{url}}]` array:
+
+```ts
+const result = await router.route('vision', {
+  system: 'Describe what you see.',
+  user: 'What is in this photo?',
+  images: [
+    { url: 'https://cdn.example.com/photo.jpg', mimeType: 'image/jpeg' },
+    // OR pass raw bytes as base64:
+    // { b64: '<base64>', mimeType: 'image/jpeg' },
+  ],
+});
+```
+
+Providers that don't support multimodal input drop the field silently — the user text is sent as a plain string. When you need guaranteed vision, put a vision-capable provider first in the chain and let a text-only backstop handle refusals.
+
+Vision + Azure often means combining the flags:
+
+```ts
+new OpenAICompatProvider({
+  name: 'azure_vision',
+  url: '...',
+  apiKey: env.AZURE_OPENAI_API_KEY,
+  model: 'gpt-5.4-mini',
+  maxTokensField: 'max_completion_tokens',
+  // No omitTemperature — gpt-5.4-mini vision path accepts temperature.
+});
+```
+
+Combine with [`ingestMedia`](MEDIA.md#ingestmedia--meta-download--upload-in-one-call) for the full "Meta media → R2 → vision" pipeline.
+
+## `extraLogFields` hook
+
+Since v0.16, `AIRouter.route(…)` accepts an optional callback that receives the winning provider's raw response on SUCCESS and returns extra columns to inline into the ledger row. Right for classifier category / intent tag / route decision — no follow-up UPDATE needed.
+
+```ts
+await router.route('classifier', {
+  system: '...',
+  user: text,
+  extraLogFields: (response) => {
+    const m = response.match(/"categoria"\s*:\s*"([a-z]+)"/i);
+    return { classifier_category: m?.[1] ?? null };
+  },
+});
+```
+
+The returned keys MUST appear in the ledger's `allowedExtraColumns` array — no schema surprises. Errors from the callback are swallowed (`console.log`ged) so tracing failure never fails the route.
+
+**Common uses:**
+
+- Classifier: extract `{categoria: X}` into a `classifier_category` column so `SELECT classifier_category, COUNT(*) FROM ai_call_log WHERE task='classifier' GROUP BY 1` is a one-liner.
+- Route tagging: `route_flavor: 'shortcut' | 'full'` when the same task chains different providers based on cost.
+- Prompt version: `prompt_version: 'v3'` when A/B testing prompts across providers.
+
+**Anti-uses:**
+
+- Extracting the ENTIRE response text into a column. That's what an object storage (or Langfuse via `Tracer`) is for.
+- Anything expensive or blocking. The callback runs synchronously in the ledger-write path.
+
 ## Anti-patterns
 
 - **Routing a conversational turn directly to `router.route()` and bypassing `AIClient`.** You lose threadId / message history that `OpenAIAssistant` manages. Wrap the router inside an `AIClient` implementation if you're doing conversation.
@@ -200,3 +282,12 @@ Tune for the typical user latency budget — for a chat reply that the user is a
 - **Forgetting to apply migration `019` before deploying with `ledger` set.** Calls succeed but every `ledger.record` throws — caught by the router's try/catch so the route doesn't break, but you'll spam console errors.
 - **Estimating cost inside `resolveChain` or the provider's `run()`.** Keep cost math in the `estimateCost` callback — the router invokes it AFTER the provider returns tokens, with the values it knows.
 - **Routing high-cardinality task labels (one per user / per turn).** The ledger indexes on `task` for analytics; an exploding task space ruins the index. Keep tasks coarse (`classifier`, `responder`, `summarizer`, ...).
+- **Adding `extraLogFields` for keys not in `allowedExtraColumns`.** `ledger.record` throws in that case (caught by the router). Every new key needs `AICallLedger({allowedExtraColumns: [...]})` + a migration column.
+- **Using classic `max_tokens` on Azure reasoning models.** The request returns a 400. Set `maxTokensField: 'max_completion_tokens'` on the provider.
+
+## Complementary reading
+
+- [`LLM_CLASSIFIER.md`](LLM_CLASSIFIER.md) — the classify → parse → fail-closed pattern on top of the router
+- [`AGENT_LOOP.md`](AGENT_LOOP.md) — the multi-step counterpart when you need tool calls + memory
+- [`MEDIA.md`](MEDIA.md) — vision-input wiring for the `images` field
+- [`UTILITIES.md#provider_limits--cost-estimator-v014`](UTILITIES.md#provider_limits--cost-estimator-v014) — curated free-tier caps + prices for the registered providers
