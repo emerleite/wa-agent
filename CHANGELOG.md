@@ -2,6 +2,50 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.16.1] — 2026-07-28
+
+### Fixed
+
+- **`LLMClassifier.classify` — `routerError` now falls through empty error messages.** When the router returned `{ok: false, errorMessage: '', errorKind: 'timeout'}`, the result's `routerError` was `''` — unhelpful. Now falls through to `errorKind`. Small behavior change; the old behavior was arguably a bug.
+
+### Docs
+
+Comprehensive coverage refresh for v0.14–v0.16 primitives that previously lived only in the CHANGELOG. Every one of the 21 new symbols now appears in a browsable doc.
+
+- **New:** `docs/LLM_CLASSIFIER.md` — decision tree, custom parse/template, three-tier fallback recipe, anti-patterns for the v0.15 primitive.
+- **New:** `docs/MEDIA.md` — end-to-end media story consolidating `R2Cache` (v0.4) + `R2MediaStore` (v0.12) + `ingestMedia` + `MediaStorage` interface (v0.15). Decision tree at top; photo→R2→vision + LGPD erasure recipes.
+- **New:** `docs/QUEUE.md` — `D1CoalesceQueue` per-user dispatch (v0.14 `processBatchForUser` / parallel `processAll`), same-user race documented, tenant scoping, full webhook + cron wiring.
+- **Updated:** `docs/UTILITIES.md` — grew from 273 → 519 lines. 7 new sections: `phoneLookupCandidates`, `Streak` (day-math), `resolveReplyContext`, `classifyDbError`/`logDbError`, `landingHtml`/`landingResponse`, `PT_BR_INTENT_TRIGGERS`/`matchPtBrIntent`, `PROVIDER_LIMITS`/cost estimator.
+- **Updated:** `docs/SECURITY.md` — new "Authentication template" section for `sendAuthenticationTemplate` (v0.16), plus a full end-to-end OTP flow recipe combining v0.13 crypto + v0.16 template + v0.13 cookies.
+- **Updated:** `docs/META_SETUP.md` — new "Status updates + `pricing.category`" section (v0.15) explaining the UTILITY→MARKETING reclassification alarm surface + `extractStatuses` shape. New "Creating an AUTHENTICATION template" section pointing at `SECURITY.md`.
+- **Updated:** `docs/AI_ROUTER.md` — new "Azure reasoning + vision models" section (`maxTokensField`, `omitTemperature`, `images`) and "`extraLogFields` hook" section (v0.16).
+- **Updated:** `docs/README.md` — index refresh. New docs in Guide + Recipes categories. By-version table + by-persona entries updated.
+- **Updated:** `README.md` — Status section grew v0.14/v0.15/v0.16 entries. Recipe docs list refreshed with cross-links.
+
+### Ops
+
+- **`CLAUDE.md`** at repo root — non-negotiables (testing convention, migrations, release format, working style) that Claude Code loads automatically at every session start. Consolidates rules previously spread across `docs/CONTRIBUTING.md` and Claude memory.
+- **`stryker.config.json`** — added the 19 v0.12–v0.16 pure-logic modules that had 100% unit coverage but had never been mutation-tested (`phone_br`, `whatsapp_format`, `llm_json`, `log`, `state_block`, `streak`, `reply_context`, `db_error`, `og_landing`, `pt_br_intents`, `provider_limits`, `llm_classifier`, `safety_footer`, `r2_media_store`, `media_pipeline`, `admin_auth`, `crypto`, `cookie`, `tracer`).
+
+### Tests
+
+1141 → **1184 tests passing** across 96 files (43 new). Mutation score improvements on the six modules previously below 75% coverage:
+
+| Module | Before | After | Δ |
+|---|---|---|---|
+| `og_landing` | 68.97 | 86.21 | +17.2 |
+| `llm_classifier` | 60.82 | 73.74 | +12.9 |
+| `pt_br_intents` | 70.00 | 80.00 | +10.0 |
+| `crypto` | 77.14 | 85.71 | +8.6 |
+| `safety_footer` | 68.97 | 72.41 | +3.4 |
+| `admin_auth` | 73.33 | 76.67 | +3.3 |
+
+Overall mutation score 66.35 → 67.09; `covered` metric 79.97 → 80.77.
+
+### Notes
+
+Patch release. No new public API. `LLMClassifier`'s tweaked fallback behavior is the only observable change and only for the empty-error-message corner case.
+
 ## [0.16.0] — 2026-07-28
 
 ### Added
