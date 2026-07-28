@@ -142,6 +142,18 @@ export interface AgentOptions {
 
 type Lifecycle = 'onFirstContact' | 'onMessage' | 'afterReply' | 'onError';
 
+/** Media types `agent.on<Type>` sugar covers (v0.17+). */
+export type MediaType = 'image' | 'audio' | 'video' | 'document' | 'sticker' | 'location' | 'contacts';
+
+/**
+ * Guard verdict (v0.17). Return `null` to allow dispatch. Return an object to
+ * deny — the framework replies with `.reply` (when set) then aborts dispatch.
+ * The guard is a good place for paywall / trial / feature-flag / geo checks.
+ */
+export type GuardVerdict = null | { reply?: string; silent?: boolean };
+export type GuardFn = (ctx: HandlerContext) => GuardVerdict | Promise<GuardVerdict>;
+export type MediaHandler = (ctx: HandlerContext) => void | Promise<void>;
+
 export class Agent {
 	readonly client: WhatsAppClient;
 	/** Drizzle ORM client (v0.2+). Use `agent.db.select()/.insert()/...` in handlers. */
@@ -155,6 +167,10 @@ export class Agent {
 	readonly window: MessageWindow;
 	readonly commands = new CommandRouter<HandlerContext>();
 	readonly buttons = new ButtonRouter<HandlerContext>();
+	/** Media-type handlers registered via `agent.on{Image,Audio,Video,Document,Sticker,Location,Contacts}` (v0.17). */
+	readonly _mediaHandlers = new Map<MediaType, MediaHandler>();
+	/** Pre-dispatch guards registered via `agent.guard(fn)` (v0.17). */
+	readonly _guards: GuardFn[] = [];
 
 	readonly verifyToken: string | null;
 	readonly appSecret: string | null;
@@ -274,6 +290,49 @@ export class Agent {
 		return this;
 	}
 
+	/**
+	 * Register a handler for a specific media type (v0.17). Pre-v0.17 the only
+	 * way to handle non-text inbound was `agent.on('onMessage', ...)` with a
+	 * manual `switch (inbound.type)` — every non-text-only bot reimplemented
+	 * the switch. This method is sugar over `dispatch()` so consumers write
+	 * `agent.onImage(async (ctx) => ...)` and the framework routes correctly.
+	 *
+	 * When both a media handler AND `agent.on('onMessage', ...)` are set,
+	 * BOTH fire (lifecycle hook runs first per the existing contract, then
+	 * dispatch picks the media handler).
+	 */
+	onImage(handler: MediaHandler): this { return this.onMedia('image', handler); }
+	onAudio(handler: MediaHandler): this { return this.onMedia('audio', handler); }
+	onVideo(handler: MediaHandler): this { return this.onMedia('video', handler); }
+	onDocument(handler: MediaHandler): this { return this.onMedia('document', handler); }
+	onSticker(handler: MediaHandler): this { return this.onMedia('sticker', handler); }
+	onLocation(handler: MediaHandler): this { return this.onMedia('location', handler); }
+	onContacts(handler: MediaHandler): this { return this.onMedia('contacts', handler); }
+
+	private onMedia(type: MediaType, handler: MediaHandler): this {
+		this._mediaHandlers.set(type, handler);
+		return this;
+	}
+
+	/**
+	 * Register a pre-dispatch guard (v0.17). Runs after `onMessage` lifecycle
+	 * hooks and before button/command/media dispatch. Return `null` to allow.
+	 * Return `{reply?, silent?}` to deny — the framework sends `reply` (when
+	 * set) and short-circuits dispatch for THIS message.
+	 *
+	 * Guards run in the order they were registered. First denying guard wins;
+	 * later guards are not consulted. Errors thrown from a guard are caught
+	 * by the outer dispatch try/catch and the message is treated as an
+	 * `[Agent] dispatch error` (safest default: fail-closed, no dispatch).
+	 *
+	 * Distinct from `Blocklist` — Blocklist is a HARD DROP without a reply.
+	 * `guard` is a "deny + tell the user why" pattern (paywall, trial, geo).
+	 */
+	guard(fn: GuardFn): this {
+		this._guards.push(fn);
+		return this;
+	}
+
 	on(event: Lifecycle, handler: (payload: unknown) => void | Promise<void>): this {
 		this._lifecycleHooks[event].push(handler);
 		return this;
@@ -360,6 +419,17 @@ export class Agent {
 	private async dispatch(ctx: HandlerContext): Promise<void> {
 		const { inbound } = ctx;
 
+		// v0.17: pre-dispatch guards. First denying verdict wins.
+		for (const g of this._guards) {
+			const verdict = await g(ctx);
+			if (verdict) {
+				if (verdict.reply && !verdict.silent) {
+					await ctx.reply.text(verdict.reply);
+				}
+				return;
+			}
+		}
+
 		if ('subtype' in inbound && inbound.subtype === 'button_reply') {
 			await this.buttons.dispatch(inbound.buttonId, ctx);
 			return;
@@ -375,6 +445,13 @@ export class Agent {
 
 		if (inbound.type === 'text' || (inbound.type === 'audio' && ctx.text)) {
 			await this.commands.dispatch(ctx.text, ctx);
+			return;
+		}
+
+		// v0.17: media-type handlers (image/audio-without-transcript/video/document/sticker/location/contacts).
+		const mediaHandler = this._mediaHandlers.get(inbound.type as MediaType);
+		if (mediaHandler) {
+			await mediaHandler(ctx);
 		}
 	}
 

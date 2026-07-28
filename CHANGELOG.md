@@ -2,6 +2,29 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.17.0] — 2026-07-28
+
+### Added
+
+- **`agent.onImage` / `onAudio` / `onVideo` / `onDocument` / `onSticker` / `onLocation` / `onContacts`** — first-class media handlers on `Agent`. Pre-v0.17 the only way to handle non-text media was `agent.on('onMessage', ...)` + a manual `switch (inbound.type)`. Every non-text-only bot reimplemented the switch — aysu still does today. Now: `agent.onImage(async (ctx) => await pipeline(env, ctx))`. Wired into `dispatch()` so `commands` still owns text/audio-with-transcript; media handlers own the rest. Registering the same media type twice replaces the previous handler (last-wins).
+- **`agent.guard(fn)` pre-dispatch guard** — allow/deny hook that runs after `onMessage` lifecycle hooks and before button/command/media dispatch. `fn` returns `null` to allow or `{reply?: string, silent?: boolean}` to deny. When denied and `reply` is set (and `silent` is falsy), the framework sends the reply before short-circuiting. First denying guard wins; later guards are not consulted. Distinct from `Blocklist` (hard-drop with no reply) — this is the "trial expired / paywall / geo-gate" pattern where you want to tell the user what happened.
+- **`WhatsAppClient.sendUtilityTemplate(to, {name, language?, bodyParams?, urlButtonSuffix?, buttonIndex?})`** — Meta UTILITY-category template sender. Sibling of `sendAuthenticationTemplate` (v0.16). Composes body-params + optional URL-button suffix in the shape Meta expects. Body-only, button-only, and both-together templates all supported. See [`docs/META_SETUP.md`](docs/META_SETUP.md) for the template registration flow.
+- **`createD1ChainResolver({db, fallback?, tableName?, taskColumn?, chainColumn?, cacheMs?})`** — D1-backed runtime override for `AIRouter.resolveChain`. Reads `(task, chain)` from a D1 table (default `ai_provider_overrides`), falls back to a secondary resolver (typically `envChainResolver(env)`) on cache miss. Per-isolate cache with configurable TTL (default 60s) — hot-path calls are a Map lookup, not a D1 query. Table names + columns are validated as bare identifiers (SQL string is not parameterizable). Complements `envChainResolver` (env-var only) for consumers who want per-tenant / A/B / on-the-fly overrides without a deploy.
+- **`withTenant(tenantId, tenantColumn, ...extraWhere)`** in `@emerleite/wa-agent` — Drizzle helper for multi-tenant row-level enforcement. Composes `WHERE tenant_id = ? [AND ...]`. Lint-checkable pattern: consumers can write a Biome/ESLint rule that fails when a query touches a tenant-scoped table without `withTenant`. Extracted from psico.
+- **`@emerleite/wa-agent/testing` subpath export** with `withIsolatedD1()` — per-test D1 isolation helper for consumers writing integration tests. Registers vitest `beforeEach` + `afterEach` hooks that apply framework migrations and drop non-system tables between tests. `vitest` and `@cloudflare/vitest-pool-workers` become optional peers of the framework (only pulled in when consumers import the testing subpath). Consolidates the recipe previously copy-pasted from `docs/TESTING.md`.
+
+### Notes
+
+Additive release; no API breakage. The new `Agent` methods (`onImage`/`guard`/…) return the instance for chaining, consistent with `command`/`button`/`onText`. `AIRouter.resolveChain` already accepted `Promise<readonly string[]>`, so `createD1ChainResolver` slots in without any changes to the router itself.
+
+New optional peer dependencies:
+- `vitest` (`^2.0.0 || ^3.0.0`) — only when importing `@emerleite/wa-agent/testing`
+- `@cloudflare/vitest-pool-workers` (`^0.5.0`) — same
+
+### Tests
+
+1184 → **1227 tests passing** across 100 files (43 new): `agent_media_and_guards` (13), `send_utility_template` (8), `d1_chain_resolver` (10), `with_tenant` (5), tsc unit adjustments (+7).
+
 ## [0.16.2] — 2026-07-28
 
 ### Added

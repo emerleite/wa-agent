@@ -275,6 +275,43 @@ The returned keys MUST appear in the ledger's `allowedExtraColumns` array — no
 - Extracting the ENTIRE response text into a column. That's what an object storage (or Langfuse via `Tracer`) is for.
 - Anything expensive or blocking. The callback runs synchronously in the ledger-write path.
 
+## D1-backed chain overrides (`createD1ChainResolver`)
+
+`envChainResolver(env)` reads chains from `env.AI_CHAIN_${TASK}` — cheap but requires a redeploy to change. For per-tenant overrides, A/B experiments, or on-call chain swaps without a deploy, `createD1ChainResolver` (v0.17) reads the chain from a D1 table with a per-isolate cache.
+
+```ts
+import { AIRouter, createD1ChainResolver, envChainResolver } from '@emerleite/wa-agent';
+
+const router = new AIRouter({
+  providers: { /* … */ },
+  resolveChain: createD1ChainResolver({
+    db: env.DB,
+    fallback: envChainResolver(env),  // fall through when D1 has no override
+    cacheMs: 60_000,                    // default; per-isolate Map TTL
+  }),
+});
+```
+
+Create the override table in a consumer migration (framework does not ship it — column ownership varies):
+
+```sql
+CREATE TABLE ai_provider_overrides (
+  task       TEXT PRIMARY KEY,
+  chain      TEXT NOT NULL,          -- comma-separated provider names
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+Behavior:
+
+- **D1 hit** → parse `chain` (trim, drop empty entries), cache for `cacheMs`.
+- **D1 miss** → call `fallback(task)` if configured, else return `[]`.
+- **D1 error** → log + fall through to `fallback` (never crash the request).
+
+The cache is a per-isolate `Map` — every Cloudflare Workers isolate maintains its own; a live UPDATE reflects on all isolates within `cacheMs`. Set `cacheMs: 0` to disable caching (fresh D1 read on every route call).
+
+Custom table/column names are supported and validated as bare identifiers (`[A-Za-z_][A-Za-z0-9_]*`) — because the SQL string isn't parameterizable, any name with weird characters throws at construction to defense-in-depth against injection.
+
 ## Anti-patterns
 
 - **Routing a conversational turn directly to `router.route()` and bypassing `AIClient`.** You lose threadId / message history that `OpenAIAssistant` manages. Wrap the router inside an `AIClient` implementation if you're doing conversation.
@@ -284,6 +321,8 @@ The returned keys MUST appear in the ledger's `allowedExtraColumns` array — no
 - **Routing high-cardinality task labels (one per user / per turn).** The ledger indexes on `task` for analytics; an exploding task space ruins the index. Keep tasks coarse (`classifier`, `responder`, `summarizer`, ...).
 - **Adding `extraLogFields` for keys not in `allowedExtraColumns`.** `ledger.record` throws in that case (caught by the router). Every new key needs `AICallLedger({allowedExtraColumns: [...]})` + a migration column.
 - **Using classic `max_tokens` on Azure reasoning models.** The request returns a 400. Set `maxTokensField: 'max_completion_tokens'` on the provider.
+- **Skipping `fallback` on `createD1ChainResolver` in production.** A misspelled task label + no fallback = `resolveChain` returns `[]` = router returns `errorKind: 'config'`. Always chain to `envChainResolver(env)` (or a static default) so a missing D1 row degrades gracefully.
+- **Setting `cacheMs` very high (hours) for `createD1ChainResolver`.** Defeats the "flip the chain during an incident" use case. 30-120s is the sweet spot.
 
 ## Complementary reading
 

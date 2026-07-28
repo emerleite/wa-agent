@@ -202,6 +202,21 @@ app.post('/portal/otp/verify', async (c) => {
 
 Note the pairing: crypto primitives (v0.13) + template sender (v0.16) + cookie helpers (v0.13) = the full flow in ~40 lines. Every piece is optional / swappable — pick a real auth framework like better-auth if the flow gets more complex.
 
+### Where does `sendUtilityTemplate` fit?
+
+`sendAuthenticationTemplate` (v0.16) is scoped to OTP. Most other transactional flows (order updates, appointment confirmations, lead alerts) are UTILITY-category templates — `WhatsAppClient.sendUtilityTemplate` (v0.17) covers that shape:
+
+```ts
+await client.sendUtilityTemplate(brokerPhone, {
+  name: 'lead_notification',
+  language: 'pt_BR',
+  bodyParams: [listing.title.slice(0, 60), lead.name.slice(0, 60), lead.phone, (lead.message ?? '(sem)').slice(0, 250)],
+  urlButtonSuffix: redirectToken,   // omit if the template has no dynamic URL button
+});
+```
+
+See [`docs/META_SETUP.md`](META_SETUP.md#utility-vs-marketing-reclassification-risk) for the template registration flow + the UTILITY→MARKETING reclassification alarm surface (v0.15).
+
 ### Reference schema (copy into your consumer)
 
 Not shipped as a framework migration on purpose — column shape varies too much across consumers. This is the shape zap-prime uses:

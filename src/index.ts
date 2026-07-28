@@ -7,17 +7,24 @@
 /// <reference path="./cloudflare.d.ts" />
 
 export { Agent } from './agent.js';
-export type { AgentOptions } from './agent.js';
+export type { AgentOptions, MediaType, MediaHandler, GuardFn, GuardVerdict } from './agent.js';
 export { mountWebhook } from './hono.js';
 
 // Drizzle DB layer (v0.2+)
 export { createDb, isDrizzleClient, normalizeDb } from './db/client.js';
 export type { DB, Schema } from './db/client.js';
 export * as schema from './db/schema/index.js';
+export { withTenant } from './db/with_tenant.js';
 
 // Client + webhook
 export { WhatsAppClient } from './client/whatsapp.js';
-export type { WhatsAppClientOptions, ContactCard, TemplatePayload, AuthenticationTemplateOptions } from './client/whatsapp.js';
+export type {
+	WhatsAppClientOptions,
+	ContactCard,
+	TemplatePayload,
+	AuthenticationTemplateOptions,
+	UtilityTemplateOptions,
+} from './client/whatsapp.js';
 export { extractInbound } from './webhook/extract.js';
 export { verifyMetaSignature, handleVerifyChallenge } from './webhook/verify.js';
 export { extractStatuses } from './webhook/extract.js';
@@ -258,7 +265,7 @@ export type {
 	ListCallsOptions,
 } from './ai/ai_call_log.js';
 export type { AICallLogRow } from './db/schema/ai_call_log.js';
-export { AIRouter, envChainResolver } from './ai/router.js';
+export { AIRouter, envChainResolver, createD1ChainResolver } from './ai/router.js';
 export type {
 	AIRouterOptions,
 	RouteArgs,
@@ -266,6 +273,7 @@ export type {
 	RouteSuccess,
 	RouteFailure,
 	ChainAttempt,
+	CreateD1ChainResolverOptions,
 } from './ai/router.js';
 
 // Agent loop (v0.11) — multi-step tool-calling on top of AgentLLM adapters.

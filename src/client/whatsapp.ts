@@ -33,6 +33,32 @@ export interface AuthenticationTemplateOptions {
 	buttonIndex?: number;
 }
 
+/**
+ * v0.17: options for `sendUtilityTemplate`. UTILITY templates cover most
+ * transactional notifications (order updates, appointment confirmations,
+ * lead alerts). Meta pricing tier: mid (~R$0.04-0.05 in BR as of Jul/2025),
+ * cheaper than MARKETING (~R$0.31-0.38).
+ */
+export interface UtilityTemplateOptions {
+	name: string;
+	language?: string;
+	/**
+	 * Positional {{1}}, {{2}}, ... parameters for the body. Order matters —
+	 * Meta expects the same order as the placeholders in the approved template.
+	 * Values are sent as `{type:'text', text}`; convert non-strings yourself.
+	 */
+	bodyParams?: string[];
+	/**
+	 * URL-button dynamic suffix ({{1}} in the button URL). When set, the
+	 * template MUST have a URL button of type dynamic. When absent, no
+	 * button component is sent (the template's static URL button, if any,
+	 * still works).
+	 */
+	urlButtonSuffix?: string;
+	/** Zero-based index of the URL button that carries the suffix. Default 0. */
+	buttonIndex?: number;
+}
+
 export class WhatsAppClient {
 	readonly endpoint: string;
 	readonly token: string;
@@ -185,6 +211,60 @@ export class WhatsAppClient {
 						parameters: [{ type: 'text', text: code }],
 					},
 				],
+			},
+		});
+	}
+
+	/**
+	 * v0.17: send a Meta UTILITY-category template with body params + optional
+	 * dynamic URL-button suffix. Sibling of `sendAuthenticationTemplate`.
+	 *
+	 * The template must be pre-approved by Meta in the UTILITY category with
+	 * a body containing `{{1}} {{2}} ...` placeholders in the exact order you
+	 * pass `bodyParams`. If your template has a URL button whose href ends
+	 * in `{{1}}`, set `urlButtonSuffix` — miss it and Meta returns 400.
+	 *
+	 *   await client.sendUtilityTemplate(brokerPhone, {
+	 *     name: 'lead_notification',
+	 *     language: 'pt_BR',
+	 *     bodyParams: [
+	 *       listing.title.slice(0, 60),
+	 *       lead.name.slice(0, 60),
+	 *       lead.phone.slice(0, 30),
+	 *       (lead.message ?? '(sem mensagem)').slice(0, 250),
+	 *     ],
+	 *     urlButtonSuffix: redirectToken,
+	 *   });
+	 *
+	 * See `docs/META_SETUP.md#creating-a-utility-template-with-body--url-button`
+	 * for the template shape you need to register.
+	 */
+	async sendUtilityTemplate(to: string, opts: UtilityTemplateOptions): Promise<boolean> {
+		if (!opts.name) throw new Error('sendUtilityTemplate: template name required');
+		const language = opts.language ?? 'pt_BR';
+		const components: Array<Record<string, unknown>> = [];
+		if (opts.bodyParams?.length) {
+			components.push({
+				type: 'body',
+				parameters: opts.bodyParams.map((text) => ({ type: 'text', text })),
+			});
+		}
+		if (opts.urlButtonSuffix !== undefined && opts.urlButtonSuffix !== null) {
+			components.push({
+				type: 'button',
+				sub_type: 'url',
+				index: String(opts.buttonIndex ?? 0),
+				parameters: [{ type: 'text', text: opts.urlButtonSuffix }],
+			});
+		}
+		return this.send({
+			messaging_product: 'whatsapp',
+			to: normalize(to),
+			type: 'template',
+			template: {
+				name: opts.name,
+				language: { code: language },
+				components,
 			},
 		});
 	}

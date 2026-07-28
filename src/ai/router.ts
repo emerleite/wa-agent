@@ -343,3 +343,101 @@ export function envChainResolver(env: Record<string, unknown>): (task: string) =
 		return raw.split(',').map((s) => s.trim()).filter(Boolean);
 	};
 }
+
+/**
+ * v0.17: D1-backed chain resolver with per-isolate cache. Reads an
+ * `(task, chain)` override from a table (default `ai_provider_overrides`),
+ * falling back to a secondary resolver (typically `envChainResolver(env)`)
+ * when no row exists for the task.
+ *
+ * The cache lives per Cloudflare Workers isolate (module-scoped Map). Rows
+ * fetched from D1 are memoized for `cacheMs` (default 60s) — hot-path calls
+ * are one Map lookup, not a D1 query. Any live update to the overrides table
+ * takes effect within `cacheMs` on every isolate.
+ *
+ * Table shape (create this migration in your consumer — the framework does
+ * NOT ship it because column names / ownership vary):
+ *
+ *   CREATE TABLE ai_provider_overrides (
+ *     task    TEXT PRIMARY KEY,
+ *     chain   TEXT NOT NULL,           -- comma-separated provider names
+ *     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+ *   );
+ *
+ * Usage:
+ *
+ *   const router = new AIRouter({
+ *     providers,
+ *     resolveChain: createD1ChainResolver({
+ *       db: env.DB,
+ *       fallback: envChainResolver(env),
+ *       cacheMs: 60_000,
+ *     }),
+ *     ...
+ *   });
+ */
+export interface CreateD1ChainResolverOptions {
+	/**
+	 * D1Database or Drizzle client. The resolver only needs `prepare().bind().first()`,
+	 * so a raw `D1Database` works fine.
+	 */
+	db: { prepare(query: string): { bind(...v: unknown[]): { first<T>(): Promise<T | null> } } };
+	/**
+	 * Secondary resolver — used when no D1 row exists for a task. Typical:
+	 * `envChainResolver(env)`. Absent → the D1 miss yields `[]` and the
+	 * router returns `errorKind: 'config'`.
+	 */
+	fallback?: (task: string) => readonly string[] | Promise<readonly string[]>;
+	/** Table name. Default `ai_provider_overrides`. */
+	tableName?: string;
+	/** Column holding the task label. Default `task`. */
+	taskColumn?: string;
+	/** Column holding the comma-separated chain. Default `chain`. */
+	chainColumn?: string;
+	/** Cache TTL in ms. Default 60_000 (60s). Set 0 to disable cache. */
+	cacheMs?: number;
+	/** Injectable clock for tests. */
+	now?: () => number;
+}
+
+export function createD1ChainResolver(opts: CreateD1ChainResolverOptions): (task: string) => Promise<string[]> {
+	const {
+		db,
+		fallback,
+		tableName = 'ai_provider_overrides',
+		taskColumn = 'task',
+		chainColumn = 'chain',
+		cacheMs = 60_000,
+		now = () => Date.now(),
+	} = opts;
+	// Validate identifiers — this SQL isn't parameterizable, so refuse anything with weird chars.
+	for (const [n, v] of Object.entries({ tableName, taskColumn, chainColumn })) {
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) {
+			throw new Error(`createD1ChainResolver: ${n} must be a bare identifier ([A-Za-z_][A-Za-z0-9_]*)`);
+		}
+	}
+	const cache = new Map<string, { chain: string[]; expiresAt: number }>();
+	const sql = `SELECT ${chainColumn} AS chain FROM ${tableName} WHERE ${taskColumn} = ? LIMIT 1`;
+
+	return async (task: string): Promise<string[]> => {
+		const nowMs = now();
+		const cached = cache.get(task);
+		if (cached && cached.expiresAt > nowMs) return cached.chain;
+		let chain: string[] | null = null;
+		try {
+			const row = await db.prepare(sql).bind(task).first<{ chain: string | null }>();
+			if (row && typeof row.chain === 'string' && row.chain.trim()) {
+				chain = row.chain.split(',').map((s) => s.trim()).filter(Boolean);
+			}
+		} catch (e) {
+			console.log(`[createD1ChainResolver] D1 read failed for task=${task}: ${e instanceof Error ? e.message : String(e)}`);
+		}
+		if (!chain && fallback) {
+			const fb = await fallback(task);
+			chain = Array.from(fb);
+		}
+		chain = chain ?? [];
+		if (cacheMs > 0) cache.set(task, { chain, expiresAt: nowMs + cacheMs });
+		return chain;
+	};
+}

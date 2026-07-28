@@ -1055,6 +1055,17 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
 
+### v0.17.0 — minor release (media handlers, guard hook, UTILITY template, D1 chain resolver, withTenant, testing subpath):
+
+- **`agent.onImage` / `onAudio` / `onVideo` / `onDocument` / `onSticker` / `onLocation` / `onContacts`** — first-class media handlers so consumers stop hand-writing `switch (inbound.type)` inside an `onMessage` lifecycle hook.
+- **`agent.guard(fn)`** — pre-dispatch allow/deny hook for paywalls, trial gates, geo-gates. Distinct from `Blocklist` (hard-drop) — this replies + short-circuits.
+- **`WhatsAppClient.sendUtilityTemplate(to, {name, language?, bodyParams?, urlButtonSuffix?, buttonIndex?})`** — sibling of `sendAuthenticationTemplate` for the UTILITY-category template shape.
+- **`createD1ChainResolver({db, fallback?, cacheMs?})`** — D1-backed runtime override for `AIRouter.resolveChain` with per-isolate cache (default 60s TTL). Complements `envChainResolver` for consumers who want per-tenant / A/B overrides.
+- **`withTenant(tenantId, col, ...clauses)`** — Drizzle helper for row-level multi-tenant enforcement. Lint-checkable pattern.
+- **`@emerleite/wa-agent/testing` subpath** with `withIsolatedD1()` — per-test D1 isolation helper. `vitest` + `@cloudflare/vitest-pool-workers` become optional peers.
+
+1227 tests passing, additive-only, no breaking changes.
+
 ### v0.16.0 — minor release (OTP template, OG landing, safety-footer factory, AIRouter extra-log hook):
 
 - **`WhatsAppClient.sendAuthenticationTemplate(to, code, {name, language?, buttonIndex?})`** — Meta AUTHENTICATION-category OTP flow. Encodes the non-obvious rule that the code MUST appear in body AND URL button parameters. Pairs with v0.13's `generateOtpCode` / `hashOtpCode` for a complete portal-OTP flow. See [`docs/SECURITY.md`](./docs/SECURITY.md#authentication-template).

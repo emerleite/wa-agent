@@ -160,12 +160,26 @@ export function withIsolatedD1(): void {
     const tables = await env.DB.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'd1_%' AND name NOT LIKE '_cf_%'"
     ).all<{ name: string }>();
-    for (const { name } of tables.results) {
+    for (const { name } of tables.results ?? []) {
       await env.DB.prepare(`DROP TABLE IF EXISTS "${name}"`).run();
     }
   });
 }
 ```
+
+**v0.17: shipped as a subpath export.** You can skip the copy-paste and import directly:
+
+```ts
+import { withIsolatedD1 } from '@emerleite/wa-agent/testing';
+
+describe('LeadStore', () => {
+  withIsolatedD1();
+
+  it('upserts a lead', async () => { /* … */ });
+});
+```
+
+`vitest` and `@cloudflare/vitest-pool-workers` are optional peers — only pulled in when you actually import `@emerleite/wa-agent/testing`.
 
 Use it at the top of an integration `describe`:
 
