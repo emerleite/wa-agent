@@ -1,7 +1,16 @@
 {
 	"name": "@emerleite/wa-agent",
-	"version": "0.16.1",
+	"version": "0.16.2",
 	"description": "Opinionated WhatsApp Cloud API agent framework for Cloudflare Workers — Drizzle-backed stores, D1-coalesced webhook queue, AI assistant integration with pluggable reply enrichment, opt-in CRM, account-link redemption, broadcast cron, sequential drip plans, rate-capped opportunistic side-channel sends, Zod-validated event stream + Analytics Engine sink, and a composable intent → policy → LLM → audit pipeline.",
+	"author": "Emerson Leite",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/emerleite/wa-agent.git"
+	},
+	"bugs": {
+		"url": "https://github.com/emerleite/wa-agent/issues"
+	},
+	"homepage": "https://github.com/emerleite/wa-agent#readme",
 	"type": "module",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",

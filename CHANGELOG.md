@@ -2,6 +2,23 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.16.2] — 2026-07-28
+
+### Added
+
+- **`package.json` metadata for the npm package page**: `repository`, `bugs`, `homepage`, `author`. The npm registry now renders a "Repository" link to the GitHub project, an "Issues" link to the tracker, and a "Homepage" link to the README. Previously the package page had no cross-links to source or issues.
+
+### Ops
+
+- **`.github/workflows/ci.yml`** — CI on every PR + push to `main`. Runs `typecheck`, `check:hardcoded`, `build`, and the full test suite on Node 22. Concurrency-cancelled per ref.
+- **`.github/workflows/publish.yml`** — publishes to npm on any `v*.*.*` tag push. Gates on tag matching semver form + `package.json.version`, then runs the ship-it checklist, then `npm publish --access=public --provenance` (OIDC-attested via GitHub `id-token` permission). Requires `NPM_TOKEN` repo secret with 2FA-bypass enabled.
+- **`package-lock.json`** committed to the repo (was gitignored) so `npm ci` in the CI workflows can install exact resolved versions. Modern guidance for libraries — the lockfile is a dev / CI reproducibility artifact and does not affect what consumers install.
+- **`CLAUDE.md` + `docs/CONTRIBUTING.md`** — release checklist rewritten around the tag-push automation. One-time repo setup docs added for the `NPM_TOKEN` granular access token.
+
+### Notes
+
+First release published via the automated GitHub Actions workflow. Behavior unchanged; no API surface changes; no test count change.
+
 ## [0.16.1] — 2026-07-28
 
 ### Fixed
