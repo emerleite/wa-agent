@@ -97,18 +97,56 @@ New migration:
 
 ## Release checklist
 
+Publishing is **automated**. Pushing a semver-shaped `vX.Y.Z` tag triggers `.github/workflows/publish.yml`, which re-runs the full ship-it checklist and calls `npm publish --access=public --provenance`. You don't run `npm publish` from your laptop unless the workflow is broken.
+
 Once a release-worthy set of commits lands on `main`:
 
 1. **Bump `package.json` version.** Semver-ish (0.x still, so minor bumps for additive features are OK).
 2. **Write a CHANGELOG entry.** Under `## [X.Y.Z] — YYYY-MM-DD`, sections `Added` / `Changed` / `Fixed` / `Notes` / `Tests`. See existing entries for tone.
-3. **Run the full battery:**
+3. **Run the ship-it checklist locally** (same commands the workflow will run):
    ```sh
-   npm run test && npm run typecheck && npm run build && npm run check:hardcoded
+   npm run test && npm run typecheck && npm run check:hardcoded && npm run build
    ```
 4. **Commit** as `Release vX.Y.Z: <one-line summary>` with a HEREDOC body summarizing the release + `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` when Claude authored substantial changes.
-5. **Tag + push:** `git tag vX.Y.Z && git push origin main --tags`.
-6. **Publish:** `npm publish --dry-run` first (verify tarball contents), then `npm publish`.
+5. **Push the commit:** `git push origin main`. This triggers `ci.yml`; wait for green.
+6. **Annotated tag + push tag:**
+   ```sh
+   git tag -a vX.Y.Z HEAD -m "vX.Y.Z — <one-line summary>"
+   git push origin vX.Y.Z
+   ```
+   Pushing the tag triggers `publish.yml`. Watch the run at `Actions` → `Publish to npm`. On success the artifact lands on the npm registry within seconds. The workflow gates on:
+   - Tag name matches the semver form `^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$`
+   - Tag version matches `package.json.version` (defense against publishing a stale build)
+   - Ship-it checklist passes
 7. **Announce** in the internal changelog channel / issue tracker.
+
+### One-time repo setup (before the first automated publish)
+
+`.github/workflows/publish.yml` requires a `NPM_TOKEN` secret with:
+
+- Type: **Granular access token** (npm's modern token; classic tokens work but are deprecated)
+- Package permissions: `@emerleite/wa-agent` → Read and write
+- Additional restrictions: **Bypass 2FA restrictions** enabled (required so the workflow runs without an interactive OTP)
+- Expiration: your call (30 days minimum; auto-renew via calendar reminder)
+
+Create at [`npmjs.com/settings/<user>/tokens/granular-access-tokens/new`](https://www.npmjs.com/settings/emerleite/tokens/granular-access-tokens/new), then add to the repo:
+
+- GitHub → `wa-agent` repo → Settings → Secrets and variables → Actions → New repository secret
+- Name: `NPM_TOKEN`
+- Value: the token from npm
+
+The `--provenance` flag on `npm publish` uses GitHub OIDC (via `permissions.id-token: write` in the workflow), so publishes are cryptographically attested — the npm registry shows a "built and signed on GitHub" badge on the version page.
+
+### Falling back to a manual publish
+
+If the workflow is broken and you must ship urgently:
+
+```sh
+npm publish --dry-run           # verify tarball contents
+npm publish --access=public --otp=<code>
+```
+
+Then fix the workflow in a follow-up commit — never leave the automated path broken.
 
 ## Style
 

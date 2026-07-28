@@ -86,7 +86,8 @@ Full rule + worked examples: [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) and 
 - **CHANGELOG entry FIRST**, then commit. Format follows Keep a Changelog conventions (`## [X.Y.Z] — YYYY-MM-DD` with `Added` / `Changed` / `Fixed` / `Notes` / `Tests` subsections).
 - **Version bump in `package.json`** matches CHANGELOG entry.
 - **Annotated git tag** `vX.Y.Z` after commit lands on main.
-- **Publish** with `npm publish --access=public` (scoped package requires the flag on first publish per version).
+- **Publish is automated** — pushing the `vX.Y.Z` tag triggers `.github/workflows/publish.yml` which re-runs the ship-it checklist and runs `npm publish --access=public --provenance`. Do NOT publish manually unless the workflow is broken. First-time setup requires the `NPM_TOKEN` repo secret; see `.github/workflows/publish.yml`.
+- **CI runs on every PR + push to main** via `.github/workflows/ci.yml` — same ship-it checklist. Red CI blocks merges.
 
 Full checklist: `docs/CONTRIBUTING.md#release-checklist`.
 
