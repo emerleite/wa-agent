@@ -275,6 +275,32 @@ The returned keys MUST appear in the ledger's `allowedExtraColumns` array — no
 - Extracting the ENTIRE response text into a column. That's what an object storage (or Langfuse via `Tracer`) is for.
 - Anything expensive or blocking. The callback runs synchronously in the ledger-write path.
 
+## LiteLLM, Ollama, LM Studio, any Chat-Completions-compat API
+
+`OpenAICompatProvider` speaks the OpenAI Chat Completions HTTP shape. Anything that serves that shape works — including **LiteLLM proxy** for centralized multi-provider fan-out:
+
+```ts
+new OpenAICompatProvider({
+  name: 'via_litellm',
+  url: 'https://your-litellm-proxy.com/v1/chat/completions',
+  apiKey: env.LITELLM_KEY,
+  model: 'anthropic/claude-sonnet-4',
+});
+```
+
+For local dev via Ollama:
+
+```ts
+new OpenAICompatProvider({
+  name: 'ollama_local',
+  url: 'http://localhost:11434/v1/chat/completions',
+  apiKey: '',  // Ollama doesn't require one
+  model: 'llama3.1:8b',
+});
+```
+
+Full provider list + recipes for swapping providers without changing framework code: [`PROVIDER_STRATEGY.md`](PROVIDER_STRATEGY.md).
+
 ## D1-backed chain overrides (`createD1ChainResolver`)
 
 `envChainResolver(env)` reads chains from `env.AI_CHAIN_${TASK}` — cheap but requires a redeploy to change. For per-tenant overrides, A/B experiments, or on-call chain swaps without a deploy, `createD1ChainResolver` (v0.17) reads the chain from a D1 table with a per-isolate cache.

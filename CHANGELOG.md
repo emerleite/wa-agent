@@ -2,6 +2,26 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.17.1] — 2026-07-28
+
+### Docs
+
+Provider-strategy documentation refresh. No code changes beyond a JSDoc `@deprecated` note.
+
+- **New: `docs/PROVIDER_STRATEGY.md`** — decision tree covering the three provider-agnostic layers (`AIClient` / `AgentLoop` / `AIRouter`), full compatibility table with **LiteLLM proxy + Ollama + LM Studio** as first-class fits for `OpenAICompatProvider`, peer-dep breakdown (nothing is required — only pulled in by the specific primitive you use), and recipes for common swaps ("OpenAI → Anthropic in one import", "Ollama for dev, cloud for prod", "per-tenant provider override without redeploy").
+- **`docs/AGENT_LOOP.md` — new "Migrating from `OpenAIAssistant`" section** with a before/after code diff. `OpenAIAssistant` (Assistants API, proprietary to OpenAI + Azure) is the only genuine vendor lock-in the framework ships; the migration path to `AgentLoop` + `@emerleite/wa-agent/ai-sdk` is a refactor to swap providers with a one-import change.
+- **`docs/AI_ROUTER.md` — explicit LiteLLM proxy + Ollama recipes** in a dedicated section. Points at `PROVIDER_STRATEGY.md` for the full picture.
+- **`docs/README.md`** — new entry in the Guide category; by-version table gains v0.17.0 + v0.17.1.
+- **README.md** — v0.17.1 Status entry.
+
+### Changed
+
+- **`OpenAIAssistant` soft-deprecated** via `@deprecated` JSDoc on the class. The class continues to work; there is no removal timeline. TypeScript surfaces the deprecation warning to consumers on upgrade. Recommended replacement is `AgentLoop` + `@emerleite/wa-agent/ai-sdk`, which is provider-agnostic across 15+ AI SDK providers.
+
+### Notes
+
+Zero API surface changes. Same 1227 tests passing. This release exists to make the lock-in story browsable — the framework was already provider-agnostic; the docs didn't say so loudly enough.
+
 ## [0.17.0] — 2026-07-28
 
 ### Added

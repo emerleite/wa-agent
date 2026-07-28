@@ -13,6 +13,7 @@ Full index of everything under `docs/`, categorized by what you're trying to do.
 - [`AGENT_LOOP.md`](AGENT_LOOP.md) — multi-step tool calling with pluggable LLM adapter (v0.11)
 - [`AI_ROUTER.md`](AI_ROUTER.md) — single-shot multi-provider LLM path with circuit breaker (v0.9+). Azure reasoning + vision + `extraLogFields` in v0.15/v0.16.
 - [`LLM_CLASSIFIER.md`](LLM_CLASSIFIER.md) — classify → parse → fail-closed on top of `AIRouter` (v0.15)
+- [`PROVIDER_STRATEGY.md`](PROVIDER_STRATEGY.md) — no vendor lock-in: the three composition layers (`AIClient` / `AgentLoop` / `AIRouter`), LiteLLM + Ollama + LM Studio compatibility, `OpenAIAssistant` deprecation notes, migration recipes (v0.17.1)
 - [`QUEUE.md`](QUEUE.md) — `D1CoalesceQueue` per-user debounce + fan-out (v0.1 + v0.14 additions)
 - [`MEDIA.md`](MEDIA.md) — full media story: `R2Cache` + `R2MediaStore` + `ingestMedia` + `MediaStorage` (v0.4 / v0.12 / v0.15)
 - [`MULTI_TENANT.md`](MULTI_TENANT.md) — one Worker, many WhatsApp numbers
@@ -51,6 +52,8 @@ Which docs cover what shipped in each release:
 
 | Version | What shipped | Docs |
 |---|---|---|
+| v0.17.1 | Provider strategy docs + soft-deprecate `OpenAIAssistant` (no code changes; documentation clarifies the three provider-agnostic layers and calls out LiteLLM/Ollama/LM Studio compat) | [`PROVIDER_STRATEGY.md`](PROVIDER_STRATEGY.md), [`AGENT_LOOP.md#migrating-from-openaiassistant`](AGENT_LOOP.md#migrating-from-openaiassistant) |
+| v0.17.0 | `agent.onImage/onAudio/onVideo/onDocument/onSticker/onLocation/onContacts`, `agent.guard(fn)`, `sendUtilityTemplate`, `createD1ChainResolver`, `withTenant`, `@emerleite/wa-agent/testing` subpath | [`AI_ROUTER.md#d1-backed-chain-overrides-created1chainresolver`](AI_ROUTER.md#d1-backed-chain-overrides-created1chainresolver), [`SECURITY.md#where-does-sendutilitytemplate-fit`](SECURITY.md#where-does-sendutilitytemplate-fit), [`TESTING.md`](TESTING.md) |
 | v0.16.0 | AUTHENTICATION template, OG landing helper, safety-footer factory, `AIRouter.extraLogFields` hook | [`SECURITY.md`](SECURITY.md#authentication-template), [`UTILITIES.md#landinghtml--landingresponse-og-enriched-v016`](UTILITIES.md#landinghtml--landingresponse--og-enriched--v016), [`AI_ROUTER.md#extralogfields-hook`](AI_ROUTER.md#extralogfields-hook) |
 | v0.15.0 | `LLMClassifier`, `resolveReplyContext`, `ingestMedia`+`MediaStorage`, `extractStatuses`+`StatusUpdate`, `classifyDbError`, Azure vision + reasoning options on `OpenAICompatProvider` | [`LLM_CLASSIFIER.md`](LLM_CLASSIFIER.md), [`MEDIA.md`](MEDIA.md), [`META_SETUP.md#status-updates--pricingcategory`](META_SETUP.md#status-updates--pricing-category), [`UTILITIES.md`](UTILITIES.md), [`AI_ROUTER.md#azure-reasoning--vision-models`](AI_ROUTER.md#azure-reasoning--vision-models) |
 | v0.14.0 | Queue fan-out (`processBatchForUser` + parallel `processAll`), `phoneLookupCandidates`, `Streak`, PT-BR intents, `PROVIDER_LIMITS` | [`QUEUE.md`](QUEUE.md), [`UTILITIES.md`](UTILITIES.md) |

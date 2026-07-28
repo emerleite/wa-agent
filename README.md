@@ -1055,6 +1055,15 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
 
+### v0.17.1 — patch release (provider strategy docs, `OpenAIAssistant` soft-deprecated):
+
+- **`docs/PROVIDER_STRATEGY.md`** — decision tree covering the three provider-agnostic layers (`AIClient` / `AgentLoop` / `AIRouter`), full compatibility table with LiteLLM proxy + Ollama + LM Studio, and migration recipes.
+- **`OpenAIAssistant` soft-deprecated via `@deprecated` JSDoc** — the class works, no removal timeline. Recommended replacement is `AgentLoop` + `@emerleite/wa-agent/ai-sdk` (provider-agnostic across 15+ providers via Vercel AI SDK).
+- **`docs/AGENT_LOOP.md`** — new "Migrating from `OpenAIAssistant`" section with before/after code.
+- **`docs/AI_ROUTER.md`** — explicit LiteLLM proxy + Ollama recipes.
+
+No code changes beyond the JSDoc note. Same 1227 tests passing.
+
 ### v0.17.0 — minor release (media handlers, guard hook, UTILITY template, D1 chain resolver, withTenant, testing subpath):
 
 - **`agent.onImage` / `onAudio` / `onVideo` / `onDocument` / `onSticker` / `onLocation` / `onContacts`** — first-class media handlers so consumers stop hand-writing `switch (inbound.type)` inside an `onMessage` lifecycle hook.

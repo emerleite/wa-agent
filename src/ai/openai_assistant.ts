@@ -1,5 +1,20 @@
 /**
  * OpenAI Assistants API adapter (works with both OpenAI direct and Azure OpenAI).
+ *
+ * @deprecated (soft, since v0.17.1) — the underlying API is proprietary to
+ * OpenAI + Azure OpenAI, so consumers using this class are effectively
+ * locked to those two vendors. Anthropic / Google / Mistral / Groq / etc.
+ * do not implement the Assistants API. The recommended replacement is
+ * `AgentLoop` + the `@emerleite/wa-agent/ai-sdk` adapter, which is
+ * provider-agnostic (15+ providers via Vercel AI SDK), ships better tool
+ * ergonomics (Zod validation + framework-owned dispatch + per-step audit),
+ * and persists conversation history via the framework-owned
+ * `ConversationMemory` (`agent_turns` table) instead of proprietary OpenAI
+ * thread ids. See `docs/PROVIDER_STRATEGY.md` for the decision tree and
+ * `docs/AGENT_LOOP.md` for the migration recipe.
+ *
+ * The class continues to work; there is no removal timeline. Adopting
+ * `AgentLoop` is a refactor, not a compatibility patch.
  */
 import type { AIChatArgs, AIChatResult, AIClient } from '../types.js';
 

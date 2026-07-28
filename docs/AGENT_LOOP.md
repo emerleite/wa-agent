@@ -271,6 +271,66 @@ const myLLM: AgentLLM = {
 
 The Zod schema on each tool is passed through raw. If your provider only accepts JSON Schema, convert at the adapter boundary (e.g. via `zod-to-json-schema`).
 
+## Migrating from `OpenAIAssistant`
+
+`OpenAIAssistant` (v0.1) uses OpenAI's proprietary Assistants API — locks you to OpenAI + Azure OpenAI. `AgentLoop` (v0.11) replaces it with a provider-agnostic path via Vercel AI SDK. Migration recipe:
+
+**Before** — `OpenAIAssistant` + `reply.ai(text)`:
+
+```ts
+import { Agent, OpenAIAssistant } from '@emerleite/wa-agent';
+
+const agent = new Agent({
+  whatsapp: { /* ... */ },
+  db: env.DB,
+  ai: new OpenAIAssistant({ client: openai, assistantId: env.ASSISTANT_ID }),
+});
+
+agent.onText(async ({ text, reply, session }) => {
+  await reply.ai(text, { threadId: session?.threadId });
+});
+```
+
+**After** — `AgentLoop` + AI SDK (provider-agnostic):
+
+```ts
+import { AgentLoop, ConversationMemory, ToolRegistry, AICallLedger, Agent } from '@emerleite/wa-agent';
+import { createAISDKAgentLLM } from '@emerleite/wa-agent/ai-sdk';
+import { anthropic } from '@ai-sdk/anthropic';   // or /openai, /google, /mistral, /groq, ...
+
+const loop = new AgentLoop({
+  llm: createAISDKAgentLLM(anthropic('claude-sonnet-4-5')),
+  tools: new ToolRegistry([/* … */]),
+  memory: new ConversationMemory({ db: env.DB }),
+  ledger: new AICallLedger({ db: env.DB }),
+});
+
+const agent = new Agent({
+  whatsapp: { /* ... */ },
+  db: env.DB,
+});
+
+agent.onText(async ({ text, reply, user }) => {
+  const result = await loop.run({
+    whatsapp: user.whatsapp,
+    userText: text,
+    systemPrompt: SYSTEM_PROMPT,
+    context: { env, whatsapp: user.whatsapp },
+  });
+  if (result.finishReason === 'error') return reply.text('Hit a problem — try again?');
+  await reply.text(result.text || '(no reply)');
+});
+```
+
+What changes:
+
+- **Provider swap = one import.** `anthropic('claude-sonnet-4-5')` → `openai('gpt-4o-mini')` → `google('gemini-2.5-flash')` — nothing else moves.
+- **Thread ids become framework-owned.** Conversation history lives in the `agent_turns` table via `ConversationMemory`, keyed by WhatsApp id + optional tenant id. No proprietary OpenAI thread id to manage.
+- **Tools become first-class.** Zod-validated, framework-owned dispatch, per-step audit through `AICallLedger`.
+- **`reply.ai(text)` goes away.** You drive replies directly with `reply.text(result.text)`.
+
+Migration is a refactor, not a compatibility patch. `OpenAIAssistant` continues to work and is not scheduled for removal — but new code should use `AgentLoop`. See [`PROVIDER_STRATEGY.md`](PROVIDER_STRATEGY.md) for the full lock-in story.
+
 ## Anti-patterns
 
 - **Auto-throwing tools on user error** — return an error string instead. Throwing makes the whole turn fail (`finishReason: 'error'`); the LLM can't repair it.
