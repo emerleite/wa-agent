@@ -66,6 +66,35 @@ describe('requireAdminAuth', () => {
 		const r = requireAdminAuth(req(), { ...config, realm: 'bad"quote' });
 		expect(r?.headers.get('www-authenticate')).toBe('Basic realm="badquote", charset="UTF-8"');
 	});
+
+	it('defaults realm to "admin" when not configured', () => {
+		const r = requireAdminAuth(req(), config);
+		expect(r?.headers.get('www-authenticate')).toBe('Basic realm="admin", charset="UTF-8"');
+	});
+
+	it('returns exactly status 401 (not 403 or 200) on failure', () => {
+		const r = requireAdminAuth(req(), config);
+		expect(r?.status).toBe(401);
+	});
+
+	it('response body on 401 is "unauthorized"', async () => {
+		const r = requireAdminAuth(req(), config);
+		expect(await r?.text()).toBe('unauthorized');
+	});
+
+	it('Basic credentials must match BOTH user AND pass (either mismatch → 401)', () => {
+		const good = btoa('admin:hunter2');
+		const wrongUser = btoa('root:hunter2');
+		const wrongPass = btoa('admin:wrong');
+		expect(requireAdminAuth(req({ authorization: `Basic ${good}` }), config)).toBeNull();
+		expect(requireAdminAuth(req({ authorization: `Basic ${wrongUser}` }), config)?.status).toBe(401);
+		expect(requireAdminAuth(req({ authorization: `Basic ${wrongPass}` }), config)?.status).toBe(401);
+	});
+
+	it('empty username in Basic (":pass") fails the guard', () => {
+		const r = requireAdminAuth(req({ authorization: `Basic ${btoa(':hunter2')}` }), config);
+		expect(r?.status).toBe(401);
+	});
 });
 
 describe('timingSafeStringEqual', () => {

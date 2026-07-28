@@ -106,7 +106,7 @@ export class LLMClassifier<C extends string> {
 			return {
 				category: this.fallback,
 				confident: false,
-				routerError: result.errorMessage ?? result.errorKind,
+				routerError: result.errorMessage || result.errorKind,
 			};
 		}
 

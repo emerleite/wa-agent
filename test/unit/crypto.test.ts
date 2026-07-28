@@ -76,4 +76,44 @@ describe('hashOtpCode + hashSessionToken', () => {
 		const t = 'my-token';
 		expect(await hashSessionToken(t)).toBe(await hashSessionToken(t));
 	});
+
+	it('hashOtpCode is deterministic for a fixed (code, salt) pair', async () => {
+		expect(await hashOtpCode('123456', 'salt')).toBe(await hashOtpCode('123456', 'salt'));
+	});
+
+	it('hashOtpCode changes when code changes (salt held constant)', async () => {
+		const a = await hashOtpCode('123456', 'salt');
+		const b = await hashOtpCode('654321', 'salt');
+		expect(a).not.toBe(b);
+	});
+
+	it('hashSessionToken output is 64 hex chars (SHA-256)', async () => {
+		expect(await hashSessionToken('anything')).toMatch(/^[0-9a-f]{64}$/);
+	});
+});
+
+describe('generateOtpCode / generateRandomToken — additional mutation coverage', () => {
+	it('generateOtpCode(1) always returns exactly 1 digit', () => {
+		for (let i = 0; i < 50; i++) {
+			const c = generateOtpCode(1);
+			expect(c).toMatch(/^\d$/);
+			expect(c.length).toBe(1);
+		}
+	});
+
+	it('generateOtpCode(10) always returns exactly 10 digits', () => {
+		expect(generateOtpCode(10)).toMatch(/^\d{10}$/);
+	});
+
+	it('generateOtpCode rejects negative length', () => {
+		expect(() => generateOtpCode(-1)).toThrow();
+	});
+
+	it('generateRandomToken(1) returns exactly 2 hex chars', () => {
+		expect(generateRandomToken(1)).toMatch(/^[0-9a-f]{2}$/);
+	});
+
+	it('generateRandomToken rejects negative byteLength', () => {
+		expect(() => generateRandomToken(-1)).toThrow();
+	});
 });

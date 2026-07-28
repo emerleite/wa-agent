@@ -49,4 +49,18 @@ describe('matchPtBrIntent', () => {
 		expect(matchPtBrIntent(null)).toBeNull();
 		expect(matchPtBrIntent(undefined)).toBeNull();
 	});
+
+	it('iterates in declaration order — first match wins even when a later trigger would also fire', () => {
+		// "obrigado pela ajuda" matches both `thanks` and `help` (via "ajuda"); help fires first (declaration order).
+		// Since help is ANCHORED to start-of-message, "obrigado pela ajuda" only matches `thanks`.
+		expect(matchPtBrIntent('obrigado pela ajuda')).toBe('thanks');
+		// Confirm declaration order by using a text where both patterns fire from start.
+		// "obrigado" matches thanks; "ajuda" (if at start) matches help.
+		expect(matchPtBrIntent('ajuda com obrigado')).toBe('help'); // help fires first because starts with 'ajuda'
+	});
+
+	it('trim strips surrounding whitespace before matching', () => {
+		expect(matchPtBrIntent('   ajuda   ')).toBe('help');
+		expect(matchPtBrIntent('\t\nobrigado\n')).toBe('thanks');
+	});
 });

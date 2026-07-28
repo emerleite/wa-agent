@@ -48,4 +48,30 @@ describe('makeSafetyFooterEnricher', () => {
 		// @ts-expect-error missing footer
 		expect(() => makeSafetyFooterEnricher({ triggers: /x/ })).toThrow(/footer/);
 	});
+
+	it('rejects empty-string footer at construction', () => {
+		expect(() => makeSafetyFooterEnricher({ triggers: /x/, footer: '' })).toThrow(/footer/);
+	});
+
+	it('order matters: trigger check runs BEFORE alreadyMentioned check', () => {
+		// Response contains "188" but userText does NOT trigger — enricher must return response unchanged (not treat "already mentioned" as sole gate).
+		expect(enricher('bom dia', 'ligue pro 188 mesmo assim')).toBe('ligue pro 188 mesmo assim');
+	});
+
+	it('appends footer exactly once per call (no accidental duplication)', () => {
+		const out = enricher('quero morrer', 'ok');
+		expect(out.split(FOOTER).length - 1).toBe(1);
+	});
+
+	it('trigger regex must match on userText only — response matching trigger does not fire the footer', () => {
+		const r = enricher('bom dia', 'quero morrer'); // response contains trigger but userText does not
+		expect(r).toBe('quero morrer'); // unchanged
+	});
+
+	it('numeric userText or response short-circuits (typeof !== string)', () => {
+		// @ts-expect-error runtime tolerance
+		expect(enricher(42, 'reply')).toBe('reply');
+		// @ts-expect-error runtime tolerance
+		expect(enricher('me matar', 42)).toBe(42);
+	});
 });

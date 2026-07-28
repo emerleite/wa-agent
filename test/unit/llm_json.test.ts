@@ -59,3 +59,37 @@ describe('tryExtractFirstJsonObject', () => {
 		expect(tryExtractFirstJsonObject('{"x":42}')).toEqual({ x: 42 });
 	});
 });
+
+describe('extractFirstJsonObject — mutation coverage', () => {
+	it('strips ```json fence (case-insensitive)', () => {
+		expect(extractFirstJsonObject('```JSON\n{"a":1}\n```')).toEqual({ a: 1 });
+		expect(extractFirstJsonObject('```Json\n{"a":1}\n```')).toEqual({ a: 1 });
+	});
+
+	it('handles leading whitespace before the fence', () => {
+		expect(extractFirstJsonObject('   \n```json\n{"a":1}\n```')).toEqual({ a: 1 });
+	});
+
+	it('respects string state — a { inside a string does NOT increment depth', () => {
+		// This has one outer object with a string containing {}.
+		expect(extractFirstJsonObject('{"s":"nested { inside string"}')).toEqual({ s: 'nested { inside string' });
+	});
+
+	it('respects escape sequences — \\" inside string does NOT close the string', () => {
+		expect(extractFirstJsonObject('{"s":"has \\"escaped\\" quotes"}')).toEqual({ s: 'has "escaped" quotes' });
+	});
+
+	it('respects escape sequences — \\\\ followed by " correctly closes the string', () => {
+		// {"s":"c:\\"} — the last quote closes the string (previous is escaped backslash)
+		expect(extractFirstJsonObject('{"s":"c:\\\\"}')).toEqual({ s: 'c:\\' });
+	});
+
+	it('stops at first balanced object; trailing content is ignored', () => {
+		expect(extractFirstJsonObject('{"a":1}{"b":2}')).toEqual({ a: 1 });
+	});
+
+	it('returns exactly the {...} slice — no leading/trailing chars', () => {
+		// If regex strips content beyond the object, we should get exactly {"a":1}.
+		expect(extractFirstJsonObject('preamble {"a":1} postscript')).toEqual({ a: 1 });
+	});
+});
