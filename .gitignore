@@ -5,4 +5,3 @@ coverage/
 .wrangler/
 .stryker-tmp/
 reports/
-package-lock.json
