@@ -1,6 +1,6 @@
 {
 	"$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-	"_comment": "Mutation testing for wa-agent. Mutates only files exercised by the unit suite (vitest.config.unit.ts) — pure CRUD-over-Drizzle files (UsageCounter, PreferenceStore, MessageLog, SessionStore, LeadStore, MessageWindow, SequentialPlan, Broadcast, ReEngagement, ChannelOptOuts, AccountLinkStore, ContentGenerator, EscalationStore, ConsentStore, MultiTenantAgentRegistry, AgentReviewQueue, AICallLedger, AIRouter, BotSendPacing) are intentionally excluded because there's no algorithmic logic to mutate; their behavior is verified by test/integration/.",
+	"_comment": "Mutation testing for wa-agent. Mutates only files exercised by the unit suite (vitest.config.unit.ts) — pure CRUD-over-Drizzle files (UsageCounter, PreferenceStore, MessageLog, SessionStore, LeadStore, MessageWindow, SequentialPlan, Broadcast, ReEngagement, ChannelOptOuts, AccountLinkStore, ContentGenerator, EscalationStore, ConsentStore, MultiTenantAgentRegistry, AgentReviewQueue, AICallLedger, AIRouter, BotSendPacing) are intentionally excluded because there's no algorithmic logic to mutate; their behavior is verified by test/integration/. Any new pure-logic module MUST be added to `mutate` below — see CLAUDE.md.",
 	"packageManager": "npm",
 	"testRunner": "vitest",
 	"vitest": {
@@ -38,7 +38,26 @@
 		"src/util/holdout.ts",
 		"src/ai/heuristic_fallback_classifier.ts",
 		"src/ai/circuit_breaker.ts",
-		"src/ai/llm_provider.ts"
+		"src/ai/llm_provider.ts",
+		"src/util/phone_br.ts",
+		"src/util/whatsapp_format.ts",
+		"src/util/llm_json.ts",
+		"src/util/log.ts",
+		"src/util/state_block.ts",
+		"src/util/streak.ts",
+		"src/util/reply_context.ts",
+		"src/util/db_error.ts",
+		"src/util/og_landing.ts",
+		"src/ai/pt_br_intents.ts",
+		"src/ai/provider_limits.ts",
+		"src/ai/llm_classifier.ts",
+		"src/ai/safety_footer.ts",
+		"src/media/r2_media_store.ts",
+		"src/media/media_pipeline.ts",
+		"src/security/admin_auth.ts",
+		"src/security/crypto.ts",
+		"src/security/cookie.ts",
+		"src/observability/tracer.ts"
 	],
 	"thresholds": {
 		"high": 80,
