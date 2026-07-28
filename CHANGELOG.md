@@ -2,6 +2,30 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.16.0] — 2026-07-28
+
+### Added
+
+- **`WhatsAppClient.sendAuthenticationTemplate(to, code, {name, language?, buttonIndex?})`** — Meta AUTHENTICATION-category OTP flow. Encodes the non-obvious rule that the OTP code MUST appear in BOTH the body parameter AND the URL button parameter — miss one and the "Copy code" button doesn't populate. Pairs with v0.13's `generateOtpCode` + `hashOtpCode` for a complete portal-OTP flow.
+- **`landingHtml(opts)` + `landingResponse(opts)`** (`src/util/og_landing.ts`) — minimal OpenGraph-enriched HTML landing page. Renders a `/` that Meta's WhatsApp crawler reads for URL-button preview cards, with an optional human meta-refresh to your real site. All user-supplied fields HTML-escaped. From zap-prime `admin/landing.ts`.
+- **`makeSafetyFooterEnricher({triggers, footer, alreadyMentioned?})`** (`src/ai/safety_footer.ts`) — generic factory for the deterministic-safety-footer pattern (LLM was supposed to inject a safety line and didn't — you inject it post-hoc, idempotently). Consumers configure the trigger regex (against input) + the footer text + optionally the "already mentioned" regex (against output). No PT-BR or CVV assumptions in the framework version. Generalizes bibliafala's `safety_check.js`.
+
+### Changed
+
+- **`AIRouter.route({extraLogFields})`** — new optional hook that fires ON SUCCESS with the winning provider's raw response and returns extra ledger columns. Right for inlining classifier category / intent / route tag into `ai_call_log` without a follow-up UPDATE. Errors from the callback are swallowed (tracing failure never fails the route). Extra keys must appear in the ledger's `allowedExtraColumns` — no schema surprises.
+
+### DX
+
+- `scripts/wrangler-test-strip.sh` was considered (per bibliafala `scripts/run-tests.mjs`) but the pattern is bibliafala-specific (Workers AI binding stripping for local vitest). Deferred — consumers with the same need copy the pattern; the framework doesn't need to bundle it.
+
+### Notes
+
+Additive release. No API changes; consumers on 0.15.x pick up new symbols by upgrading. `AIRouter.extraLogFields` is opt-in — omitting it preserves pre-v0.16 behavior bit-for-bit.
+
+### Tests
+
+1121 → **1141 tests passing** across 96 files (20 new): `og_landing` (8), `safety_footer` (7), `auth_template` (3), `extract_statuses` (+2 in v0.15). Typecheck clean; build clean.
+
 ## [0.15.0] — 2026-07-28
 
 ### Added

@@ -17,7 +17,7 @@ export * as schema from './db/schema/index.js';
 
 // Client + webhook
 export { WhatsAppClient } from './client/whatsapp.js';
-export type { WhatsAppClientOptions, ContactCard, TemplatePayload } from './client/whatsapp.js';
+export type { WhatsAppClientOptions, ContactCard, TemplatePayload, AuthenticationTemplateOptions } from './client/whatsapp.js';
 export { extractInbound } from './webhook/extract.js';
 export { verifyMetaSignature, handleVerifyChallenge } from './webhook/verify.js';
 export { extractStatuses } from './webhook/extract.js';
@@ -41,6 +41,8 @@ export { HeuristicFallbackClassifier, heuristicFallback } from './ai/heuristic_f
 export type { HeuristicFallbackClassifierOptions, HeuristicFn } from './ai/heuristic_fallback_classifier.js';
 export { LLMClassifier } from './ai/llm_classifier.js';
 export type { LLMClassifierOptions, ClassificationResult } from './ai/llm_classifier.js';
+export { makeSafetyFooterEnricher } from './ai/safety_footer.js';
+export type { SafetyFooterOptions } from './ai/safety_footer.js';
 export { PT_BR_INTENT_TRIGGERS, matchPtBrIntent } from './ai/pt_br_intents.js';
 export type { PtBrIntentKey } from './ai/pt_br_intents.js';
 export { PROVIDER_LIMITS, estimateCostUsd, estimateCostMicroUsd } from './ai/provider_limits.js';
@@ -373,6 +375,8 @@ export { resolveReplyContext } from './util/reply_context.js';
 export type { ResolveReplyContextArgs } from './util/reply_context.js';
 export { classifyDbError, logDbError } from './util/db_error.js';
 export type { DbErrorKind } from './util/db_error.js';
+export { landingHtml, landingResponse } from './util/og_landing.js';
+export type { LandingHtmlOptions } from './util/og_landing.js';
 export { digits, normalizeBrazilianPhone, localizeBrazilianPhone, formatBrazilianPhone, phoneLookupCandidates } from './util/phone_br.js';
 export { brtToday, dayDelta, nextStreak } from './util/streak.js';
 export type { StreakRow } from './util/streak.js';

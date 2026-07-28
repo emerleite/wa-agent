@@ -91,6 +91,15 @@ export interface RouteArgs {
 	tenantId?: string | null;
 	/** Forwarded to ledger rows for per-user debug. */
 	whatsapp?: string | null;
+	/**
+	 * v0.16: derive extra ledger columns from the winning provider's raw
+	 * response. Fires on SUCCESS only. Return keys must be listed in the
+	 * ledger's `allowedExtraColumns` — the callback is a cheap way to
+	 * inline classifier category / intent / route tag into `ai_call_log`
+	 * without a follow-up UPDATE. Errors from the callback are swallowed
+	 * (never fail the route because logging failed).
+	 */
+	extraLogFields?: (response: string) => Record<string, string | number | null>;
 }
 
 export interface ChainAttempt {
@@ -228,6 +237,14 @@ export class AIRouter {
 				this.breaker?.recordSuccess(providerName);
 				chainTried.push({ provider: providerName, status: 'success', latencyMs });
 				const cost = this.estimateCost ? this.estimateCost(providerName, result.tokensIn, result.tokensOut) : null;
+				let extraColumns: Record<string, string | number | null> | undefined;
+				if (args.extraLogFields) {
+					try {
+						extraColumns = args.extraLogFields(result.response);
+					} catch (e) {
+						console.log(`[ai] extraLogFields hook threw: ${e instanceof Error ? e.message : String(e)}`);
+					}
+				}
 				await this.logAttempt({
 					task,
 					provider: providerName,
@@ -240,6 +257,7 @@ export class AIRouter {
 					estCostMicroUsd: cost,
 					tenantId: args.tenantId,
 					whatsapp: args.whatsapp,
+					extraColumns,
 				});
 				return {
 					ok: true,
@@ -300,6 +318,7 @@ export class AIRouter {
 		errorMessage?: string | null;
 		tenantId?: string | null;
 		whatsapp?: string | null;
+		extraColumns?: Record<string, string | number | null>;
 	}): Promise<void> {
 		logStdout(row);
 		if (!this.ledger) return;

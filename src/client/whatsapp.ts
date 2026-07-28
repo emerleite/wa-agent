@@ -26,6 +26,13 @@ export interface TemplatePayload {
 	components?: unknown[];
 }
 
+export interface AuthenticationTemplateOptions {
+	name: string;
+	language?: string;
+	/** Zero-based index of the URL button that carries the code. Default 0. */
+	buttonIndex?: number;
+}
+
 export class WhatsAppClient {
 	readonly endpoint: string;
 	readonly token: string;
@@ -137,6 +144,49 @@ export class WhatsAppClient {
 		const payload: Record<string, unknown> = { messaging_product: 'whatsapp', status: 'read', message_id: wamid };
 		if (typing) payload.typing_indicator = { type: 'text' };
 		return this.send(payload);
+	}
+
+	/**
+	 * v0.16: send a Meta AUTHENTICATION-category template (the "your code is
+	 * XXXXXX" flow). Encodes the non-obvious Meta rule that the OTP code
+	 * MUST appear in BOTH the body parameter AND the URL button parameter —
+	 * miss one and the "Copy code" button doesn't populate correctly.
+	 *
+	 * The template itself must be pre-approved by Meta in the
+	 * AUTHENTICATION category with a body {{1}} placeholder + a copy-code
+	 * URL button. See `docs/META_SETUP.md` for the template shape.
+	 *
+	 *   await client.sendAuthenticationTemplate('5511999999999', '482913', {
+	 *     name: 'portal_otp',
+	 *     language: 'pt_BR',
+	 *   });
+	 *
+	 * Pairs with v0.13's `generateOtpCode` + `hashOtpCode` for a full
+	 * portal-OTP flow.
+	 */
+	async sendAuthenticationTemplate(to: string, code: string, opts: AuthenticationTemplateOptions): Promise<boolean> {
+		if (!opts.name) throw new Error('sendAuthenticationTemplate: template name required');
+		if (!code) throw new Error('sendAuthenticationTemplate: code required');
+		const language = opts.language ?? 'pt_BR';
+		const buttonIndex = String(opts.buttonIndex ?? 0);
+		return this.send({
+			messaging_product: 'whatsapp',
+			to: normalize(to),
+			type: 'template',
+			template: {
+				name: opts.name,
+				language: { code: language },
+				components: [
+					{ type: 'body', parameters: [{ type: 'text', text: code }] },
+					{
+						type: 'button',
+						sub_type: 'url',
+						index: buttonIndex,
+						parameters: [{ type: 'text', text: code }],
+					},
+				],
+			},
+		});
 	}
 
 	async downloadMedia(mediaId: string): Promise<ReadableStream | null> {
