@@ -305,6 +305,10 @@ export type {
 	AgentToolDescriptor,
 } from './agent_loop/types.js';
 export type { AgentTurnRow } from './db/schema/agent_turns.js';
+// v0.18: bridge AgentLoop into the AIClient interface so `reply.ai(text)`
+// routes through a provider-agnostic loop instead of OpenAIAssistant.
+export { agentLoopAsAIClient } from './agent_loop/as_ai_client.js';
+export type { AgentLoopAsAIClientOptions, RunOverrides } from './agent_loop/as_ai_client.js';
 
 // Human-review queue (v0.8 — closes the assisted-mode loop)
 export { AgentReviewQueue, DEFAULT_REVIEW_COLUMNS } from './review/review_queue.js';

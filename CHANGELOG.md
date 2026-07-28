@@ -2,6 +2,78 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.18.0] — 2026-07-28
+
+### Added
+
+Three additive bridges that finish the provider-agnostic story. `openai` becomes fully optional — no primitive in the framework requires it anymore. `AgentLoop` now composes with `Agent.ai` instead of replacing it. All new classes live in the `wa-agent/ai-sdk` subpath (except the bridge), so the `ai` peer stays optional; consumers pay for it only if they import them.
+
+- **`AISDKSummarizer`** (`src/ai_sdk/summarizer.ts`, exported from `@emerleite/wa-agent/ai-sdk`) — provider-agnostic `SummarizerLike` implementation via AI SDK's `generateText`. Drop-in replacement for the classic `Summarizer` (OpenAI-only). Same defaults (4 bullets, source-language preservation, 400 max tokens, 0.3 temp) but works with any Vercel AI SDK `LanguageModel`. Fail-soft: returns `null` on empty input, provider error, or empty response.
+
+  ```ts
+  import { AISDKSummarizer } from '@emerleite/wa-agent/ai-sdk';
+  import { anthropic } from '@ai-sdk/anthropic';
+  const summarizer = new AISDKSummarizer({ model: anthropic('claude-haiku-4-5') });
+  ```
+
+- **`AISDKTranscriber`** (`src/ai_sdk/transcriber.ts`, exported from `@emerleite/wa-agent/ai-sdk`) — provider-agnostic audio transcription via AI SDK's `experimental_transcribe`. Drop-in replacement for `Transcriber` (which called Whisper through the `openai` SDK's `toFile` helper). Accepts `ReadableStream | Uint8Array | ArrayBuffer`, forwards optional `providerOptions` per the SDK's transcription-model contract, fail-soft on error / empty text.
+
+  ```ts
+  import { AISDKTranscriber } from '@emerleite/wa-agent/ai-sdk';
+  import { openai } from '@ai-sdk/openai';
+  const transcriber = new AISDKTranscriber({
+    model: openai.transcription('whisper-1'),
+    providerOptions: { openai: { language: 'pt' } },
+  });
+  ```
+
+  **This removes the last hard tie to the `openai` SDK.** The classic `Transcriber` still works; new code should reach for `AISDKTranscriber` and route Whisper through `@ai-sdk/openai` (or Groq/Fireworks/Together/…).
+
+- **`agentLoopAsAIClient(opts)`** (`src/agent_loop/as_ai_client.ts`, exported from the core `@emerleite/wa-agent`) — bridge that exposes an `AgentLoop` as an `AIClient`, so `Agent.ai` + `reply.ai(text)` can run the loop under the hood. Before v0.18 the migration from `OpenAIAssistant` to `AgentLoop` forced consumers to abandon `reply.ai(text)` and drive replies manually. Now:
+
+  ```ts
+  import { Agent, AgentLoop, ConversationMemory, ToolRegistry, agentLoopAsAIClient } from '@emerleite/wa-agent';
+  import { createAISDKAgentLLM } from '@emerleite/wa-agent/ai-sdk';
+  import { openai } from '@ai-sdk/openai';
+
+  const loop = new AgentLoop({
+    llm: createAISDKAgentLLM(openai('gpt-4o-mini')),
+    tools: new ToolRegistry([/* … */]),
+    memory: new ConversationMemory({ db: env.DB }),
+  });
+
+  const agent = new Agent({
+    whatsapp: { /* ... */ },
+    db: env.DB,
+    ai: agentLoopAsAIClient({
+      loop,
+      systemPrompt: SYSTEM_PROMPT,
+      context: ({ threadId }) => ({ env, whatsapp: threadId }),
+    }),
+  });
+
+  agent.onText(async ({ text, reply, session }) => {
+    await reply.ai(text, { threadId: session?.threadId });   // now routes through AgentLoop
+  });
+  ```
+
+  `systemPrompt` accepts a function form so per-thread system prompts can be composed at call time. `context` builds a per-call tool context. `runOverrides` supplies `tenantId` / `stopWhen` / `signal` per call. `threadIdFallback` defaults to `crypto.randomUUID()`.
+
+### Docs
+
+- **`docs/PROVIDER_STRATEGY.md`** — the three new symbols slotted into the layer diagram and the peer-dep table. `openai` peer moves from "required for `Transcriber` / `OpenAIAssistant`" to "only if you use `Transcriber` / `OpenAIAssistant` — `AISDKTranscriber` doesn't need it".
+- **`docs/AGENT_LOOP.md`** — new "Bridging `AgentLoop` into `Agent.ai`" section covering the `agentLoopAsAIClient` recipe; the OpenAIAssistant migration section now points at the bridge as an alternative to refactoring away from `reply.ai(text)`.
+- **`README.md`** — v0.18.0 Status entry.
+- **`docs/README.md`** — by-version table gains v0.18.0.
+
+### Tests
+
+1227 → **1250 tests passing** across 103 files (23 new): `aisdk_summarizer` (6), `aisdk_transcriber` (9), `agent_loop_as_ai_client` (8).
+
+### Notes
+
+Zero API breakage. `Summarizer` / `Transcriber` / `OpenAIAssistant` all still work. The classic `Summarizer` and `Transcriber` are not deprecated — they remain the shortest path for consumers who already have the `openai` SDK wired.
+
 ## [0.17.1] — 2026-07-28
 
 ### Docs

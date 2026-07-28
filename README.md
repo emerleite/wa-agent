@@ -1055,6 +1055,14 @@ The "covered-only" column is the meaningful one — it scores mutations only ins
 
 Extracted from a production codebase with ~50 cron messages/sec across hundreds of thousands of leads. The shapes are stable but not yet under semver.
 
+### v0.18.0 — minor release (provider-agnostic summarizer + transcriber + `AgentLoop`-as-`AIClient` bridge):
+
+- **`AISDKSummarizer`** (`src/ai_sdk/summarizer.ts`, `@emerleite/wa-agent/ai-sdk`) — drop-in provider-agnostic `SummarizerLike` via Vercel AI SDK's `generateText`. Works with any AI SDK `LanguageModel` (Anthropic / Google / Groq / Cerebras / …).
+- **`AISDKTranscriber`** (`src/ai_sdk/transcriber.ts`, `@emerleite/wa-agent/ai-sdk`) — drop-in transcriber via AI SDK's `experimental_transcribe`. Removes the last hard tie to the `openai` SDK; Whisper still works via `@ai-sdk/openai`.
+- **`agentLoopAsAIClient({loop, systemPrompt, context?, runOverrides?})`** (core export) — bridge that exposes an `AgentLoop` as an `AIClient` so `reply.ai(text)` can route through the loop. Lets consumers migrate from `OpenAIAssistant` to provider-agnostic tool-calling without abandoning the `reply.ai(...)` DSL.
+
+1250 tests passing, additive-only, no breaking changes.
+
 ### v0.17.1 — patch release (provider strategy docs, `OpenAIAssistant` soft-deprecated):
 
 - **`docs/PROVIDER_STRATEGY.md`** — decision tree covering the three provider-agnostic layers (`AIClient` / `AgentLoop` / `AIRouter`), full compatibility table with LiteLLM proxy + Ollama + LM Studio, and migration recipes.

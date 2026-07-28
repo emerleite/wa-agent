@@ -164,10 +164,30 @@ None of the following are required to use `wa-agent`. They become required only 
 
 | Peer | Required when you use |
 |---|---|
-| `openai` | `Transcriber` (calls Whisper via `openai` SDK's `toFile` helper), `OpenAIAssistant` (Assistants API) |
-| `ai` + `@ai-sdk/*` | `wa-agent/ai-sdk` subpath (AgentLoop adapter) |
+| `openai` | Classic `Transcriber` (Whisper via `openai` SDK's `toFile` helper), `OpenAIAssistant` (Assistants API). **Not** needed by `AISDKTranscriber` — see below. |
+| `ai` + `@ai-sdk/*` | `wa-agent/ai-sdk` subpath (AgentLoop adapter, `AISDKSummarizer`, `AISDKTranscriber`) |
 | `hono` + `@hono/node-server` | `mountWebhook` / `mountMultiTenantWebhook` (Hono routes) |
 | `vitest` + `@cloudflare/vitest-pool-workers` | `wa-agent/testing` subpath (`withIsolatedD1`) |
+
+Post-v0.18, the ONLY primitives that still hard-require `openai` are `OpenAIAssistant` (deprecated) and the classic `Transcriber` / `Summarizer` (kept for backward compat). Every other integration point runs through `ai`.
+
+### Provider-agnostic summarization / transcription (v0.18)
+
+- **`AISDKSummarizer`** — drop-in for the classic `Summarizer` (which called OpenAI's `chat.completions` directly). Same `SummarizerLike` shape; wraps any Vercel AI SDK `LanguageModel`. See `src/ai_sdk/summarizer.ts`.
+- **`AISDKTranscriber`** — drop-in for `Transcriber`. Uses AI SDK's `experimental_transcribe`, so Whisper (via `@ai-sdk/openai`), Groq, or any AI-SDK-supported transcription model works without the `openai` SDK on the dep tree.
+
+```ts
+import { AISDKSummarizer, AISDKTranscriber } from '@emerleite/wa-agent/ai-sdk';
+import { openai } from '@ai-sdk/openai';
+import { anthropic } from '@ai-sdk/anthropic';
+
+const summarizer = new AISDKSummarizer({ model: anthropic('claude-haiku-4-5') });
+const transcriber = new AISDKTranscriber({ model: openai.transcription('whisper-1') });
+```
+
+### Bridging `AgentLoop` into `Agent.ai` (v0.18)
+
+`agentLoopAsAIClient({loop, systemPrompt, context?, runOverrides?})` (core export) adapts an `AgentLoop` to the `AIClient` interface. Lets `agent.ai` + `reply.ai(text)` route through the loop — provider-agnostic multi-step tool calling behind the same one-line reply DSL. See [`AGENT_LOOP.md#bridging-agentloop-into-agentai`](AGENT_LOOP.md#bridging-agentloop-into-agentai).
 
 Every peer is `peerDependenciesMeta.optional` — installing `@emerleite/wa-agent` alone pulls only `drizzle-orm` + `zod` as hard deps.
 

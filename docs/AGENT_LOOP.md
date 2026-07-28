@@ -331,6 +331,59 @@ What changes:
 
 Migration is a refactor, not a compatibility patch. `OpenAIAssistant` continues to work and is not scheduled for removal — but new code should use `AgentLoop`. See [`PROVIDER_STRATEGY.md`](PROVIDER_STRATEGY.md) for the full lock-in story.
 
+Alternatively, if you don't want to refactor `reply.ai(text)` out of your handlers, use the `agentLoopAsAIClient` bridge (v0.18) — see the next section.
+
+## Bridging `AgentLoop` into `Agent.ai`
+
+`agentLoopAsAIClient(opts)` (v0.18) adapts an `AgentLoop` to the `AIClient` interface that `Agent` expects on its `ai` field. `reply.ai(text)` then routes through the loop — provider-agnostic tool calling behind the same one-line DSL. Useful when migrating away from `OpenAIAssistant` without touching handler code.
+
+```ts
+import {
+  Agent,
+  AgentLoop,
+  ConversationMemory,
+  ToolRegistry,
+  AICallLedger,
+  agentLoopAsAIClient,
+} from '@emerleite/wa-agent';
+import { createAISDKAgentLLM } from '@emerleite/wa-agent/ai-sdk';
+import { openai } from '@ai-sdk/openai';
+
+const loop = new AgentLoop({
+  llm: createAISDKAgentLLM(openai('gpt-4o-mini')),
+  tools: new ToolRegistry([/* … */]),
+  memory: new ConversationMemory({ db: env.DB }),
+  ledger: new AICallLedger({ db: env.DB }),
+});
+
+const agent = new Agent({
+  whatsapp: { /* ... */ },
+  db: env.DB,
+  ai: agentLoopAsAIClient({
+    loop,
+    systemPrompt: SYSTEM_PROMPT,
+    // Called per turn. Anything you return lands on ctx inside every tool.
+    context: ({ threadId }) => ({ env, whatsapp: threadId }),
+    // Optional per-turn overrides (tenant, stopWhen, signal).
+    runOverrides: ({ threadId }) => ({ tenantId: threadId?.startsWith('t1_') ? 't1' : null }),
+  }),
+});
+
+agent.onText(async ({ text, reply, session }) => {
+  await reply.ai(text, { threadId: session?.threadId });   // routes through the loop
+});
+```
+
+Shape:
+
+- `loop` — the `AgentLoop` to run per chat turn.
+- `systemPrompt` — string OR `(args) => string | Promise<string>`. The function form lets you compose per-thread prompts (locale, persona, form-fill state block).
+- `context` — `(args) => TContext | Promise<TContext>`. Built per turn and passed straight to `AgentLoop.run`.
+- `threadIdFallback` — invoked when `args.threadId` is null. Default: `crypto.randomUUID()`.
+- `runOverrides` — `(args) => {tenantId?, stopWhen?, signal?}`. Per-turn tuning without wrapping the loop.
+
+The bridge preserves everything about the loop: memory, ledger, per-step audit, tool-call validation. `AIChatResult.answer` is `loop.run().text`; `answer` is `null` when the loop returned no text (e.g. an error finish reason).
+
 ## Anti-patterns
 
 - **Auto-throwing tools on user error** — return an error string instead. Throwing makes the whole turn fail (`finishReason: 'error'`); the LLM can't repair it.

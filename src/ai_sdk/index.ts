@@ -25,6 +25,13 @@
 import { generateText, stepCountIs, tool, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import type { AgentLLM, AgentLLMArgs, AgentLLMResult, AgentMessage, AgentToolDescriptor, ToolCall } from '../agent_loop/types.js';
 
+// v0.18: provider-agnostic Summarizer + Transcriber via AI SDK. Both live in
+// the ai-sdk subpath so consumers who don't use them don't pull `ai` in.
+export { AISDKSummarizer } from './summarizer.js';
+export type { AISDKSummarizerOptions } from './summarizer.js';
+export { AISDKTranscriber } from './transcriber.js';
+export type { AISDKTranscriberOptions, TranscriberProviderOptions } from './transcriber.js';
+
 export interface CreateAISDKAgentLLMOptions {
 	/** Adapter name reported on `AgentLLMResult.provider`. Default `'ai-sdk'`. */
 	name?: string;
