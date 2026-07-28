@@ -22,6 +22,17 @@ export interface ProviderRunArgs {
 	maxTokens?: number;
 	temperature?: number;
 	timeoutMs?: number;
+	/**
+	 * Optional image attachments (v0.15). When present, the user message is
+	 * rewritten as a multi-part `content` array (`[{type:'text'},{type:'image_url'}]`)
+	 * so vision-capable models can see them. Providers that don't support
+	 * multimodal input should drop this field silently.
+	 *
+	 * Provide either `url` (public URL Meta / your CDN can serve) or `b64`
+	 * (base64-encoded bytes) with the image's `mimeType` (defaults to
+	 * `image/jpeg`).
+	 */
+	images?: Array<{ url?: string; b64?: string; mimeType?: string }>;
 }
 
 export interface ProviderSuccess {
@@ -74,6 +85,19 @@ export interface OpenAICompatProviderOptions {
 	extraHeaders?: Record<string, string>;
 	/** Extra body fields merged into the JSON payload. */
 	extraBody?: Record<string, unknown>;
+	/**
+	 * Name of the "max tokens" field in the request body (v0.15). Default
+	 * `'max_tokens'` (classic Chat Completions). Azure OpenAI reasoning-family
+	 * deployments (`gpt-5-*`, `o1-*`) require `'max_completion_tokens'`. Set
+	 * this once per provider instance so the router doesn't have to know.
+	 */
+	maxTokensField?: 'max_tokens' | 'max_completion_tokens';
+	/**
+	 * When `true` (v0.15), the `temperature` field is omitted from the request
+	 * body. Reasoning-family models on Azure (`gpt-5.4-*`, `o1-*`) reject any
+	 * non-default value and error. Default `false`.
+	 */
+	omitTemperature?: boolean;
 }
 
 /**
@@ -98,6 +122,8 @@ export class OpenAICompatProvider implements LLMProvider {
 	readonly model: string;
 	readonly extraHeaders: Record<string, string>;
 	readonly extraBody: Record<string, unknown>;
+	readonly maxTokensField: 'max_tokens' | 'max_completion_tokens';
+	readonly omitTemperature: boolean;
 
 	constructor(opts: OpenAICompatProviderOptions) {
 		if (!opts.name) throw new Error('OpenAICompatProvider: name required');
@@ -109,14 +135,38 @@ export class OpenAICompatProvider implements LLMProvider {
 		this.model = opts.model;
 		this.extraHeaders = opts.extraHeaders ?? {};
 		this.extraBody = opts.extraBody ?? {};
+		this.maxTokensField = opts.maxTokensField ?? 'max_tokens';
+		this.omitTemperature = opts.omitTemperature ?? false;
 	}
 
-	async run({ system, user, maxTokens = 400, temperature = 0.6, timeoutMs = 5000 }: ProviderRunArgs): Promise<ProviderResult> {
+	async run({ system, user, maxTokens = 400, temperature = 0.6, timeoutMs = 5000, images }: ProviderRunArgs): Promise<ProviderResult> {
 		if (!this.apiKey) {
 			return { ok: false, errorKind: 'config', errorMessage: `${this.name}: apiKey not configured`, model: this.model };
 		}
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		const userContent =
+			images && images.length
+				? [
+						{ type: 'text', text: user },
+						...images.map((img) => ({
+							type: 'image_url',
+							image_url: {
+								url: img.url ?? `data:${img.mimeType ?? 'image/jpeg'};base64,${img.b64 ?? ''}`,
+							},
+						})),
+					]
+				: user;
+		const body: Record<string, unknown> = {
+			model: this.model,
+			messages: [
+				{ role: 'system', content: system },
+				{ role: 'user', content: userContent },
+			],
+			[this.maxTokensField]: maxTokens,
+			...this.extraBody,
+		};
+		if (!this.omitTemperature) body.temperature = temperature;
 		try {
 			const res = await fetch(this.url, {
 				method: 'POST',
@@ -125,16 +175,7 @@ export class OpenAICompatProvider implements LLMProvider {
 					'Content-Type': 'application/json',
 					...this.extraHeaders,
 				},
-				body: JSON.stringify({
-					model: this.model,
-					messages: [
-						{ role: 'system', content: system },
-						{ role: 'user', content: user },
-					],
-					temperature,
-					max_tokens: maxTokens,
-					...this.extraBody,
-				}),
+				body: JSON.stringify(body),
 				signal: controller.signal,
 			});
 			clearTimeout(timer);

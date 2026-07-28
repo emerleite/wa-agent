@@ -2,6 +2,32 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.15.0] — 2026-07-28
+
+### Added
+
+- **`LLMClassifier<C>`** (`src/ai/llm_classifier.ts`) — thin wrapper over `AIRouter` for the classify → parse → fallback pattern. Constructor takes `router`, `chainName`, `systemPrompt`, `categories`, `fallback` + optional `userTemplate` / `parse` / `maxTokens` / `temperature`. Default parser accepts both strict JSON (`{"categoria":"X"}` or `{"category":"X"}`) and a loose regex; default userTemplate wraps the input in `<msg>...</msg>` (bibliafala's 100-message-validated pattern). Fail-closes to `fallback` on router error, parse failure, or unknown category. Codifies the shape bibliafala and aysu both hand-rolled.
+- **`resolveReplyContext<T>({inReplyToWamid, whatsapp, byReplyWamid, byRecency, withinMinutes})`** (`src/util/reply_context.ts`) — resolve an inbound WhatsApp message to a bot-owned entity via (a) explicit reply pointer or (b) recency-window fallback. Reply pointer wins over recency. Generalizes aysu's `getMealByReplyWamid` + `findRecentMeal` composition — any "edit the last X" flow (orders, bookings, meals, tickets) fits.
+- **`ingestMedia({client, mediaId, store, scope, id})`** + **`MediaStorage`** interface (`src/media/media_pipeline.ts`) — one-call download + upload for Meta media. Uses `WhatsAppClient.downloadMediaWithMeta` for the auth'd two-hop dance, hands the bytes + Meta-provided `mime_type` to any `MediaStorage`. `R2MediaStore` (v0.12) already matches the interface; consumers wanting KV / S3 / custom storage implement the same `upload({scope, id, body, contentType})` shape.
+- **`WhatsAppClient.downloadMediaWithMeta(mediaId)`** — variant of `downloadMedia` that also returns `{stream, mimeType, sha256, fileSize}`. Right for pipelines that need the real content-type instead of guessing (zap-prime's ingestPhoto pattern).
+- **`extractStatuses(envelope)` + `StatusUpdate` type** (`src/webhook/extract.ts`) — normalize Meta's `statuses[]` array to `{wamid, status, pricingCategory, timestampMs, recipient, errors}`. The `pricingCategory` field is the surface for the UTILITY→MARKETING reclassification alarm every template-heavy bot needs. Complements `extractInbound` (message path).
+- **`classifyDbError(e)` + `logDbError(scope, method, e)`** (`src/util/db_error.ts`) — D1 / SQLite error taxonomy: `'schema'` (real bugs, dump stack), `'transient'` (retry-able), `'unknown'`. Convert any store's silent-catch into `[Scope] method=X kind=Y msg=Z` log lines. Extracted from bibliafala's `lead.js:classifyDbError`.
+
+### Changed
+
+- **`OpenAICompatProvider` — Azure param-shape support:**
+  - New `maxTokensField: 'max_tokens' | 'max_completion_tokens'` option. Azure OpenAI reasoning-family deployments (`gpt-5.4-*`, `o1-*`) reject `max_tokens` and require `max_completion_tokens`. Default preserves classic behavior.
+  - New `omitTemperature: boolean` option. Reasoning-family models reject any non-default `temperature`. Default `false`.
+  - New optional `images?: Array<{url?, b64?, mimeType?}>` in `ProviderRunArgs` (backward compatible). When present, the user message is rewritten as a multi-part `[{type:'text'},{type:'image_url'}]` array so vision-capable models see them. Providers that don't support multimodal drop the field silently.
+
+### Notes
+
+Additive release. All new capabilities are opt-in; consumers using pre-v0.15 code paths see no behavior change. `LLMClassifier` requires `AIRouter` (v0.9+) — the classifier is a shape on top of the router, not a replacement.
+
+### Tests
+
+1093 → **1121 tests passing** across 93 files (28 new): `llm_classifier` (8), `reply_context` (6), `db_error` (5), `extract_statuses` (5), `media_pipeline` (4). Typecheck clean; build clean.
+
 ## [0.14.0] — 2026-07-28
 
 ### Added

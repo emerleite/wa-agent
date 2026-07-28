@@ -20,6 +20,8 @@ export { WhatsAppClient } from './client/whatsapp.js';
 export type { WhatsAppClientOptions, ContactCard, TemplatePayload } from './client/whatsapp.js';
 export { extractInbound } from './webhook/extract.js';
 export { verifyMetaSignature, handleVerifyChallenge } from './webhook/verify.js';
+export { extractStatuses } from './webhook/extract.js';
+export type { StatusUpdate } from './webhook/extract.js';
 
 // Stores
 export { D1CoalesceQueue, combineText } from './queue/d1_coalesce_queue.js';
@@ -37,6 +39,8 @@ export { LayeredReplyEnricher, asEnricher } from './ai/reply_enricher.js';
 export type { ReplyEnricher, ReplyEnricherFn, ReplyEnrichContext, LayeredReplyEnricherOptions } from './ai/reply_enricher.js';
 export { HeuristicFallbackClassifier, heuristicFallback } from './ai/heuristic_fallback_classifier.js';
 export type { HeuristicFallbackClassifierOptions, HeuristicFn } from './ai/heuristic_fallback_classifier.js';
+export { LLMClassifier } from './ai/llm_classifier.js';
+export type { LLMClassifierOptions, ClassificationResult } from './ai/llm_classifier.js';
 export { PT_BR_INTENT_TRIGGERS, matchPtBrIntent } from './ai/pt_br_intents.js';
 export type { PtBrIntentKey } from './ai/pt_br_intents.js';
 export { PROVIDER_LIMITS, estimateCostUsd, estimateCostMicroUsd } from './ai/provider_limits.js';
@@ -365,6 +369,10 @@ export { normalizeIdentifier } from './util/normalize_identifier.js';
 export type { NormalizeIdentifierOptions } from './util/normalize_identifier.js';
 export { computeHoldout } from './util/holdout.js';
 export type { ComputeHoldoutArgs } from './util/holdout.js';
+export { resolveReplyContext } from './util/reply_context.js';
+export type { ResolveReplyContextArgs } from './util/reply_context.js';
+export { classifyDbError, logDbError } from './util/db_error.js';
+export type { DbErrorKind } from './util/db_error.js';
 export { digits, normalizeBrazilianPhone, localizeBrazilianPhone, formatBrazilianPhone, phoneLookupCandidates } from './util/phone_br.js';
 export { brtToday, dayDelta, nextStreak } from './util/streak.js';
 export type { StreakRow } from './util/streak.js';
@@ -381,6 +389,8 @@ export type { Tracer, TraceEvent, LangfuseTracerOptions } from './observability/
 // Media stores
 export { R2MediaStore } from './media/r2_media_store.js';
 export type { R2MediaStoreOptions, UploadArgs as R2MediaUploadArgs, UploadResult as R2MediaUploadResult } from './media/r2_media_store.js';
+export { ingestMedia } from './media/media_pipeline.js';
+export type { MediaStorage, IngestMediaArgs, IngestMediaResult } from './media/media_pipeline.js';
 
 // Shared types
 export type {

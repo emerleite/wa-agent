@@ -140,15 +140,42 @@ export class WhatsAppClient {
 	}
 
 	async downloadMedia(mediaId: string): Promise<ReadableStream | null> {
+		const r = await this.downloadMediaWithMeta(mediaId);
+		return r?.stream ?? null;
+	}
+
+	/**
+	 * v0.15: download variant that also returns the metadata Meta hands out
+	 * (mime_type, sha256, file_size). Right for pipelines that put the bytes
+	 * into R2 with the correct `contentType` instead of guessing.
+	 */
+	async downloadMediaWithMeta(mediaId: string): Promise<{
+		stream: ReadableStream;
+		mimeType?: string;
+		sha256?: string;
+		fileSize?: number;
+	} | null> {
 		const meta = await fetch(`${this.graphBase}/${mediaId}`, {
 			headers: { Authorization: this.authString },
 		});
 		if (!meta.ok) return null;
-		const { url } = (await meta.json()) as { url: string };
-		const file = await fetch(url, {
-			headers: { Authorization: this.authString, 'User-Agent': 'wa-agent/1.0' },
+		const info = (await meta.json()) as {
+			url: string;
+			mime_type?: string;
+			sha256?: string;
+			file_size?: number;
+		};
+		if (!info?.url) return null;
+		const file = await fetch(info.url, {
+			headers: { Authorization: this.authString, 'User-Agent': 'wa-agent/1.0' }, // hardcoded:allow — framework identity
 		});
-		return file.ok ? file.body : null;
+		if (!file.ok || !file.body) return null;
+		return {
+			stream: file.body,
+			mimeType: info.mime_type,
+			sha256: info.sha256,
+			fileSize: info.file_size,
+		};
 	}
 
 	async send(message: Record<string, unknown>): Promise<boolean> {
