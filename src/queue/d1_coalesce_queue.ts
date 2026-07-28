@@ -153,12 +153,42 @@ export class D1CoalesceQueue {
 			: eq(messageQueue.tenantId, this.tenantId);
 	}
 
-	async processAll(handler: BatchHandler): Promise<number> {
+	/**
+	 * Process all pending users' batches.
+	 *
+	 * `opts.parallel` (v0.14): fan out claim+dispatch across N users at a
+	 * time via Promise.allSettled. Chunks run sequentially so the Worker's
+	 * subrequest budget doesn't get tripped on a large backlog. Default 1
+	 * preserves pre-v0.14 sequential behavior exactly.
+	 *
+	 * The webhook path should now use `processBatchForUser(whatsapp, ...)`
+	 * (v0.14) directly, keeping each user's dispatch in its own Worker
+	 * invocation. This method is for the cron path that drains stragglers.
+	 */
+	async processAll(handler: BatchHandler, opts: { parallel?: number } = {}): Promise<number> {
 		await this.recoverStale();
+		const parallel = Math.max(1, Math.floor(opts.parallel ?? 1));
+		if (parallel === 1) {
+			let processed = 0;
+			while (await this.processNextBatch(handler)) {
+				processed++;
+				if (processed >= this.maxPerInvocation) break;
+			}
+			return processed;
+		}
+		const users = await this.listPendingUsers();
+		if (users.length === 0) return 0;
 		let processed = 0;
-		while (await this.processNextBatch(handler)) {
-			processed++;
-			if (processed >= this.maxPerInvocation) break;
+		for (let i = 0; i < users.length; i += parallel) {
+			const chunk = users.slice(i, i + parallel);
+			const results = await Promise.allSettled(chunk.map((u) => this.processBatchForUser(u, handler)));
+			for (const r of results) {
+				if (r.status === 'fulfilled' && r.value) processed++;
+				if (r.status === 'rejected') {
+					console.log('[D1CoalesceQueue] processBatchForUser rejected:', r.reason instanceof Error ? r.reason.message : r.reason);
+				}
+				if (processed >= this.maxPerInvocation) return processed;
+			}
 		}
 		return processed;
 	}
@@ -179,6 +209,85 @@ export class D1CoalesceQueue {
 			await this.failBatch(ids, e instanceof Error ? e.message : String(e));
 		}
 		return true;
+	}
+
+	/**
+	 * v0.14: process ONLY the given user's pending batch.
+	 *
+	 * Right for the webhook path: each inbound Meta webhook calls this with
+	 * the sender's whatsapp, isolating that user's dispatch in its own
+	 * Worker invocation with its own subrequest / wall-clock budget. A slow
+	 * free-tier user's classifier cascade no longer blocks other subscribers
+	 * waiting behind them in the queue.
+	 *
+	 * Documented same-user race (rare in practice, no data corruption): two
+	 * inbound webhooks for the same user within the debounce window can each
+	 * claim a disjoint set of rows and dispatch two replies. The 3s debounce
+	 * makes this unlikely — if it becomes a problem, add a per-user KV lock.
+	 */
+	async processBatchForUser(whatsapp: string, handler: BatchHandler): Promise<boolean> {
+		if (!whatsapp) return false;
+		const rows = await this.claimBatchForUser(whatsapp);
+		if (rows.length === 0) return false;
+
+		const lastRow = rows[rows.length - 1]!;
+		const ids = rows.map((r) => r.id);
+		const lastEnvelope = JSON.parse(lastRow.payload) as InboundEnvelope;
+		const combinedText = combineText(rows);
+
+		try {
+			await handler({ envelope: lastEnvelope, rows, combinedText, whatsapp });
+			await this.completeBatch(ids);
+		} catch (e) {
+			await this.failBatch(ids, e instanceof Error ? e.message : String(e));
+		}
+		return true;
+	}
+
+	/**
+	 * v0.14: distinct whatsapp numbers with pending rows due now (this tenant only).
+	 * Public so a cron can fan out `processBatchForUser` calls itself.
+	 */
+	async listPendingUsers(): Promise<string[]> {
+		const rows = await this.db
+			.selectDistinct({ whatsapp: messageQueue.whatsapp })
+			.from(messageQueue)
+			.where(
+				and(
+					eq(messageQueue.status, 'pending'),
+					lte(messageQueue.scheduledAt, sql`(datetime('now'))`),
+					this.tenantScopeFilter(),
+				),
+			)
+			.orderBy(asc(messageQueue.whatsapp));
+		return rows.map((r) => r.whatsapp);
+	}
+
+	/**
+	 * v0.14: atomic UPDATE...RETURNING scoped to one user. Public so the
+	 * cron parallel fan-out and tests can compose against a known user.
+	 */
+	async claimBatchForUser(whatsapp: string): Promise<QueueRow[]> {
+		if (!whatsapp) return [];
+		const claimed = await this.db
+			.update(messageQueue)
+			.set({
+				status: 'processing',
+				attempts: sql`${messageQueue.attempts} + 1`,
+				startedAt: sql`(datetime('now'))`,
+			})
+			.where(
+				and(
+					eq(messageQueue.whatsapp, whatsapp),
+					eq(messageQueue.status, 'pending'),
+					lte(messageQueue.scheduledAt, sql`(datetime('now'))`),
+					this.tenantScopeFilter(),
+				),
+			)
+			.returning();
+		const rows = claimed.map(toQueueRow);
+		rows.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
+		return rows;
 	}
 
 	async claimBatch(): Promise<QueueRow[]> {

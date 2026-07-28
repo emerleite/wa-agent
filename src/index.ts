@@ -37,6 +37,10 @@ export { LayeredReplyEnricher, asEnricher } from './ai/reply_enricher.js';
 export type { ReplyEnricher, ReplyEnricherFn, ReplyEnrichContext, LayeredReplyEnricherOptions } from './ai/reply_enricher.js';
 export { HeuristicFallbackClassifier, heuristicFallback } from './ai/heuristic_fallback_classifier.js';
 export type { HeuristicFallbackClassifierOptions, HeuristicFn } from './ai/heuristic_fallback_classifier.js';
+export { PT_BR_INTENT_TRIGGERS, matchPtBrIntent } from './ai/pt_br_intents.js';
+export type { PtBrIntentKey } from './ai/pt_br_intents.js';
+export { PROVIDER_LIMITS, estimateCostUsd, estimateCostMicroUsd } from './ai/provider_limits.js';
+export type { ProviderLimit } from './ai/provider_limits.js';
 
 // Routers
 export { CommandRouter } from './router/command_router.js';
@@ -361,7 +365,9 @@ export { normalizeIdentifier } from './util/normalize_identifier.js';
 export type { NormalizeIdentifierOptions } from './util/normalize_identifier.js';
 export { computeHoldout } from './util/holdout.js';
 export type { ComputeHoldoutArgs } from './util/holdout.js';
-export { digits, normalizeBrazilianPhone, localizeBrazilianPhone, formatBrazilianPhone } from './util/phone_br.js';
+export { digits, normalizeBrazilianPhone, localizeBrazilianPhone, formatBrazilianPhone, phoneLookupCandidates } from './util/phone_br.js';
+export { brtToday, dayDelta, nextStreak } from './util/streak.js';
+export type { StreakRow } from './util/streak.js';
 export { extractFirstJsonObject, tryExtractFirstJsonObject } from './util/llm_json.js';
 export { log } from './util/log.js';
 export type { Log } from './util/log.js';

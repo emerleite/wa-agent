@@ -2,6 +2,29 @@
 
 All notable changes to `wa-agent` are documented here. This project follows [Keep a Changelog](https://keepachangelog.com/) conventions; versions are not yet under strict semver — the shapes are stable but treat the surface as 0.x.
 
+## [0.14.0] — 2026-07-28
+
+### Added
+
+- **`D1CoalesceQueue.processBatchForUser(whatsapp, handler)`** — atomic claim + dispatch of ONE user's pending batch. Right for the webhook path: each Meta webhook keeps its dispatch in its own Worker invocation, so a slow free-tier user's classifier cascade no longer blocks subscribers waiting behind them. Distinct from `processNextBatch()` which picks whichever user is oldest-due.
+- **`D1CoalesceQueue.listPendingUsers()`** — public list of distinct whatsapp numbers with due pending rows (tenant-scoped). Enables custom cron fan-out patterns.
+- **`D1CoalesceQueue.claimBatchForUser(whatsapp)`** — public atomic claim for one user. Composable with any handler wiring.
+- **`D1CoalesceQueue.processAll(handler, { parallel })`** — new optional `parallel` option fans out `processBatchForUser` across N users at a time via `Promise.allSettled`. Chunks run sequentially so the Worker's subrequest budget doesn't get tripped on large backlogs. Default `parallel: 1` preserves pre-v0.14 behavior bit-for-bit.
+- **`phoneLookupCandidates(input)`** (`src/util/phone_br.ts`) — sibling of `normalizeBrazilianPhone` for the LOOKUP direction. Yields all plausible variants (±DDI, ±"9") of a BR phone number so consumers can try each candidate against a store whose historical rows might be in mixed formats. Complements the write-side normalizer.
+- **`brtToday` / `dayDelta` / `nextStreak`** (`src/util/streak.ts`) — pure day-math for cross-device activity streaks in BRT (UTC-3, no DST). Handles no-prev / same-day / consecutive / gap / clock-drift cases. Persistence layer is up to the consumer (a `StreakStore` class may come later if enough consumers reinvent the same UPSERT).
+- **`PT_BR_INTENT_TRIGGERS` + `matchPtBrIntent`** (`src/ai/pt_br_intents.ts`) — regex pack for the intent buckets Brazilian WhatsApp bots consistently reinvent (help/thanks/praise/complaint/cancel). Composes with `HeuristicFallbackClassifier` as the fallback step. Extend by overriding keys or composing `new RegExp(PT_BR_INTENT_TRIGGERS.cancel.source + '|meu-verbo', 'i')`.
+- **`PROVIDER_LIMITS` + `estimateCostUsd` + `estimateCostMicroUsd`** (`src/ai/provider_limits.ts`) — curated registry of LLM provider free-tier caps (RPD / RPM / TPD / TPM) + per-token pricing for Groq / Cerebras / OpenRouter / DeepInfra / Maritaca / Azure / Workers AI. Complements `LLMCostCalculator` (the calculator is stateless + takes ANY price table; the registry is the reference data source). Data verified 2026-06-19 against provider docs — treat as starting point, not truth.
+
+### Notes
+
+Additive release. No API changes; consumers on 0.13.x pick up new symbols by upgrading. All new capabilities are opt-in.
+
+**Skipped from the survey:** `typing_indicator: {type: 'text'}` was already shipped in `WhatsAppClient.markRead({ typing: true })`; the report suggesting it as new was mistaken.
+
+### Tests
+
+1057 → **1093 tests passing** across 88 files (36 new): `phone_lookup_candidates` (8), `streak` (12), `pt_br_intents` (11), `provider_limits` (7). Typecheck clean; build clean.
+
 ## [0.13.1] — 2026-07-24
 
 ### Changed

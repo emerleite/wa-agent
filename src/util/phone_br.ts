@@ -66,6 +66,49 @@ export function localizeBrazilianPhone(input: string | null | undefined): string
 }
 
 /**
+ * All plausible variants of a BR phone as a caller might have stored it —
+ * for LOOKUPS against a store where historical rows might use different
+ * formats. Complements `normalizeBrazilianPhone` (write-side): use this
+ * on the read side when you can't be sure which shape the DB has.
+ *
+ *   phoneLookupCandidates('11988887777')
+ *   // → ['11988887777', '5511988887777']
+ *
+ *   phoneLookupCandidates('554896967308')
+ *   // → ['554896967308', '96967308', '5548996967308']
+ *
+ * Try each returned candidate against your table in order — the first hit
+ * is the row. Idiomatic use:
+ *
+ *   for (const candidate of phoneLookupCandidates(input)) {
+ *     const row = await db.select().from(users).where(eq(users.phone, candidate)).limit(1);
+ *     if (row[0]) return row[0];
+ *   }
+ */
+export function phoneLookupCandidates(input: string | null | undefined): string[] {
+	const d = digits(input);
+	if (!d) return [];
+	const out = new Set<string>();
+	out.add(d);
+	// Bare BR number (10 fixo, 11 celular) → try with 55 prepended
+	if ((d.length === 10 || d.length === 11) && !d.startsWith('55')) {
+		out.add('55' + d);
+	}
+	// BR with country code (12 fixo, 13 celular) → try without 55 (legacy seed)
+	if ((d.length === 12 || d.length === 13) && d.startsWith('55')) {
+		out.add(d.slice(2));
+	}
+	// 12-digit mobile with country code → try injecting the missing "9"
+	if (d.length === 12 && d.startsWith('55')) {
+		const localFirst = d[4];
+		if (localFirst && '6789'.includes(localFirst)) {
+			out.add(d.slice(0, 4) + '9' + d.slice(4));
+		}
+	}
+	return Array.from(out);
+}
+
+/**
  * Human-friendly display: `+55 11 98765-4321` (mobile) or `+55 11 3333-4444`
  * (fixed line). Falls back to `+<digits>` for unknown shapes.
  */
